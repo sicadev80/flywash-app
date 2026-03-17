@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "FLY-WASH",
+    "slug": "flywash-native",
+    "scheme": "flywash",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-router"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.flywash.app"
+    },
+    "android": {
+      "package": "com.flywash.app"
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
