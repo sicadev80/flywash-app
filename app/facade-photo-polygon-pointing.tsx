@@ -1021,7 +1021,7 @@ const styles = StyleSheet.create({
     borderColor: '#111111',
   },
   dragCaptureLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 20,
   },
   crosshair: {

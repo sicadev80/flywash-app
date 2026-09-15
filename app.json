@@ -6,7 +6,9 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-sharing",
+      "expo-status-bar"
     ],
     "assetBundlePatterns": [
       "**/*"

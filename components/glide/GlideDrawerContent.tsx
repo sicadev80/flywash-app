@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { DrawerContentComponentProps, DrawerContentScrollView } from '@react-navigation/drawer';
+import { DrawerContentComponentProps, DrawerContentScrollView } from 'expo-router/drawer';
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname } from 'expo-router';
 
