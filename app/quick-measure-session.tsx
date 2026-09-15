@@ -93,6 +93,15 @@ export default function QuickMeasureSessionScreen() {
               <Text style={styles.secondaryWideButtonText}>Ajouter une autre façade</Text>
             </Pressable>
 
+            <Pressable
+              style={styles.projectWideButton}
+              onPress={() =>
+                router.push({ pathname: '/project-new', params: { fromQuickMeasure: '1' } })
+              }
+            >
+              <Text style={styles.projectWideButtonText}>Créer un projet à partir de ce relevé</Text>
+            </Pressable>
+
            <Pressable
   style={styles.goldWideButton}
   onPress={async () => {
@@ -276,6 +285,20 @@ const styles = StyleSheet.create({
   secondaryWideButtonText: {
     color: '#1C1C1E',
     fontWeight: '800',
+    fontSize: 16,
+  },
+  projectWideButton: {
+    marginHorizontal: 14,
+    marginTop: 10,
+    backgroundColor: '#111111',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  projectWideButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
     fontSize: 16,
   },
   goldWideButton: {

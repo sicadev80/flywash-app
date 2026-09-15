@@ -12,11 +12,19 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useProjectStore } from '../../lib/projectStore';
+import { useQuickMeasurementStore } from '../../lib/quickMeasurementStore';
 
 export default function ProjectNewScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ reset?: string }>();
+  const params = useLocalSearchParams<{ reset?: string; fromQuickMeasure?: string }>();
   const createProject = useProjectStore((state) => state.createProject);
+  const addBuilding = useProjectStore((state) => state.addBuilding);
+  const addFacadeToBuilding = useProjectStore((state) => state.addFacadeToBuilding);
+  const setProjectStatus = useProjectStore((state) => state.setProjectStatus);
+
+  const quickFacades = useQuickMeasurementStore((state) => state.facades);
+  const resetQuickMeasurement = useQuickMeasurementStore((state) => state.reset);
+  const fromQuickMeasure = params.fromQuickMeasure === '1' && quickFacades.length > 0;
 
   const [clientName, setClientName] = useState('');
   const [phone, setPhone] = useState('');
@@ -49,6 +57,21 @@ export default function ProjectNewScreen() {
       city,
     });
 
+    if (fromQuickMeasure) {
+      const buildingId = addBuilding(projectId, 'Bâtiment 1');
+      quickFacades.forEach((facade) => {
+        addFacadeToBuilding(projectId, buildingId, {
+          name: facade.name,
+          grossAreaM2: facade.grossAreaM2,
+          voidsAreaM2: facade.voidsAreaM2,
+          netAreaM2: facade.netAreaM2,
+          imageUri: facade.imageUri,
+        });
+      });
+      setProjectStatus(projectId, 'measured');
+      resetQuickMeasurement();
+    }
+
     router.push({
       pathname: '/project-detail',
       params: { projectId },
@@ -59,6 +82,16 @@ export default function ProjectNewScreen() {
     <GlideScreen title="Nouveau projet" style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>Nouveau projet</Text>
+
+        {fromQuickMeasure ? (
+          <View style={styles.quickBanner}>
+            <Text style={styles.quickBannerText}>
+              {quickFacades.length} façade{quickFacades.length > 1 ? 's' : ''} du relevé rapide{' '}
+              {quickFacades.length > 1 ? 'seront ajoutées' : 'sera ajoutée'} à ce projet une fois
+              créé.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.label}>Nom / Prénom client</Text>
@@ -131,6 +164,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: 16,
     color: '#1A1A1A',
+  },
+  quickBanner: {
+    backgroundColor: '#EFE8DB',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
+  },
+  quickBannerText: {
+    color: '#7B5D14',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   card: {
     backgroundColor: '#FFFFFF',
