@@ -37,7 +37,7 @@ export default function PlanningScreen() {
   );
 
   return (
-    <GlideScreen style={styles.screen}>
+    <GlideScreen title="Planning" style={styles.screen}>
       <View style={styles.topBar}>
         <Text style={styles.title}>Planning</Text>
         <View style={styles.counterPill}>

@@ -1,5 +1,5 @@
 import { loadFixedCostItems, loadFixedCostsConfig } from './fixedCostsStore';
-import { loadProducts } from './productsStore';
+import { getBoosterProducts, getMainProducts, loadProducts } from './productsStore';
 import { loadVehicles } from './vehiclesStore';
 import { loadEquipment } from './equipmentStore';
 import { loadQuickPresets } from './quickPresetsStore';
@@ -22,8 +22,8 @@ export async function runAppAudit(): Promise<AuditLine[]> {
 
   const lines: AuditLine[] = [];
 
-  const mainProducts = products.filter((p) => !p.isBooster);
-  const boosters = products.filter((p) => p.isBooster);
+  const mainProducts = getMainProducts(products);
+  const boosters = getBoosterProducts(products);
 
   lines.push({
     level: mainProducts.length ? 'ok' : 'warning',

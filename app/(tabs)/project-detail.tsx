@@ -23,7 +23,7 @@ export default function ProjectDetailScreen() {
   const params = useLocalSearchParams<{ projectId?: string }>();
   const projectId = typeof params.projectId === 'string' ? params.projectId : '';
 
-  const project = useProjectStore((state) => state.getProjectById(projectId));
+  const foundProject = useProjectStore((state) => state.getProjectById(projectId));
   const addBuilding = useProjectStore((state) => state.addBuilding);
   const deleteProject = useProjectStore((state) => state.deleteProject);
   const getProjectTotals = useProjectStore((state) => state.getProjectTotals);
@@ -31,30 +31,8 @@ export default function ProjectDetailScreen() {
   const [buildingModalVisible, setBuildingModalVisible] = useState(false);
   const [buildingName, setBuildingName] = useState('');
 
-  if (!project) {
-    function handleQuoteProject() {
-    if (totals.netFacadeAreaM2 <= 0 && totals.roofAreaM2 <= 0) {
-      Alert.alert(
-        'Projet incomplet',
-        'Ajoute au moins une façade nette ou une toiture avant de chiffrer le projet.'
-      );
-      return;
-    }
-
-    setProjectStatus(project.id, 'quoted');
-
-    router.push({
-      pathname: '/pricing',
-      params: {
-        projectId: project.id,
-        facadeNetM2: String(totals.netFacadeAreaM2),
-        roofM2: String(totals.roofAreaM2),
-        totalM2: String(totals.netFacadeAreaM2 + totals.roofAreaM2),
-      },
-    });
-  }
-
-return (
+  if (!foundProject) {
+    return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centerWrap}>
           <Text style={styles.title}>Projet introuvable</Text>
@@ -65,6 +43,10 @@ return (
       </SafeAreaView>
     );
   }
+
+  // Rebind to a non-optional const so TypeScript knows every handler below
+  // (even nested function declarations) is dealing with a real project.
+  const project = foundProject;
 
   const totals = getProjectTotals(project.id);
 
@@ -103,7 +85,7 @@ return (
           style: 'destructive',
           onPress: () => {
             deleteProject(project.id);
-            router.replace('/index');
+            router.replace('/');
           },
         },
       ]
@@ -366,6 +348,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   goldButtonText: { color: '#111111', fontWeight: '900', fontSize: 17 },
+  quoteButtonFull: {
+    flex: 1,
+    backgroundColor: '#111111',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quoteButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
   cancelButton: {
     flex: 1,
     backgroundColor: '#E7E2D9',

@@ -37,6 +37,7 @@ type ProductPayload = {
 
   boosterEnabled?: boolean;
   boosterProductId?: string;
+  boosterLabel?: string;
   boosterPercent?: number;
   boosterVolume?: number;
   boosterCost?: number;
@@ -161,7 +162,7 @@ export default function PricingTunnelV3Screen() {
   const [roofSurface, setRoofSurface] = useState('');
   const [facadeSurface, setFacadeSurface] = useState('');
 
-  const [roofMethod, setRoofMethod] = useState<'drone' | 'nettoyeur-haute-pression'>('drone');
+  const [roofMethod, setRoofMethod] = useState<'drone' | 'nettoyeur-haute-pression' | 'perche'>('drone');
   const [facadeMethod, setFacadeMethod] = useState<'drone' | 'nettoyeur-haute-pression' | 'perche'>('nettoyeur-haute-pression');
 
   const [estimatedHours, setEstimatedHours] = useState('4');
@@ -500,9 +501,14 @@ function handleValidatePricing() {
                 <View style={styles.wrap}>
                   <ChoiceChip active={roofMethod === 'drone'} label="Drone" onPress={() => setRoofMethod('drone')} />
                   <ChoiceChip
-                    active={roofMethod === 'Perche'}
+                    active={roofMethod === 'nettoyeur-haute-pression'}
+                    label="Nettoyeur haute pression"
+                    onPress={() => setRoofMethod('nettoyeur-haute-pression')}
+                  />
+                  <ChoiceChip
+                    active={roofMethod === 'perche'}
                     label="Perche"
-                    onPress={() => setRoofMethod('Perche')}
+                    onPress={() => setRoofMethod('perche')}
                   />
                 </View>
               </>

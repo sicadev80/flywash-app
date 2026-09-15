@@ -56,7 +56,7 @@ export default function ProjectNewScreen() {
   }
 
   return (
-    <GlideScreen style={styles.container}>
+    <GlideScreen title="Nouveau projet" style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>Nouveau projet</Text>
 

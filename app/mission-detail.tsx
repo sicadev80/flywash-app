@@ -62,24 +62,28 @@ export default function MissionDetailScreen() {
   const params = useLocalSearchParams<{ projectId?: string }>();
   const projectId = typeof params.projectId === 'string' ? params.projectId : '';
 
-  const project = useProjectStore((state) => state.getProjectById(projectId));
+  const foundProject = useProjectStore((state) => state.getProjectById(projectId));
   const updateProject = useProjectStore((state) => state.updateProject);
   const setProjectStatus = useProjectStore((state) => state.setProjectStatus);
   const getProjectTotals = useProjectStore((state) => state.getProjectTotals);
 
   const [replanModalVisible, setReplanModalVisible] = useState(false);
-  const [scheduledDate, setScheduledDate] = useState(isoToFrenchDate(project?.scheduledFor));
-  const [scheduledTime, setScheduledTime] = useState(isoToFrenchTime(project?.scheduledFor));
+  const [scheduledDate, setScheduledDate] = useState(isoToFrenchDate(foundProject?.scheduledFor));
+  const [scheduledTime, setScheduledTime] = useState(isoToFrenchTime(foundProject?.scheduledFor));
 
-  if (!project) {
+  if (!foundProject) {
     return (
-      <GlideScreen style={styles.screen}>
+      <GlideScreen title="Mission" style={styles.screen}>
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Mission introuvable</Text>
         </View>
       </GlideScreen>
     );
   }
+
+  // Rebind to a non-optional const so TypeScript knows every handler below
+  // (even nested function declarations) is dealing with a real project.
+  const project = foundProject;
 
   const totals = getProjectTotals(project.id);
   const totalSurface = totals.netFacadeAreaM2 + totals.roofAreaM2;
