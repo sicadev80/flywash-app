@@ -1,0 +1,442 @@
+
+import React, { useState } from 'react';
+import { SafeAreaView, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
+import { Modal, TextInput } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useProjectStore } from '../lib/projectStore';
+import { KeyboardAvoidingView, Platform } from 'react-native';
+
+const fmt = (v: number) => v.toFixed(2).replace('.', ',');
+
+export default function ProjectDetailScreen() {
+  const router = useRouter();
+  const [buildingModalVisible, setBuildingModalVisible] = useState(false);
+  const [buildingName, setBuildingName] = useState('');
+  const params = useLocalSearchParams();
+
+  const projectId = typeof params.projectId === 'string' ? params.projectId : '';
+  const project = useProjectStore((state) => state.getProjectById(projectId));
+  const addBuilding = useProjectStore((state) => state.addBuilding);
+  const getProjectTotals = useProjectStore((state) => state.getProjectTotals);
+
+  if (!project) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centerWrap}>
+          <Text style={styles.title}>Projet introuvable</Text>
+          <Pressable style={styles.goldButton} onPress={() => router.replace('/projects')}>
+            <Text style={styles.goldButtonText}>Retour à mes projets</Text>
+          </Pressable>
+        </View>
+      
+     <Modal
+  visible={buildingModalVisible}
+  transparent
+  animationType="fade"
+  onRequestClose={handleCancelAddBuilding}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalCard}>
+      <Text style={styles.modalTitle}>Nom du bâtiment</Text>
+
+      <TextInput
+        value={buildingName}
+        onChangeText={setBuildingName}
+        placeholder="Ex : Maison principale"
+        placeholderTextColor="#8C8C93"
+        style={styles.modalInput}
+        autoFocus
+      />
+
+      <View style={styles.modalActions}>
+        <Pressable
+          style={styles.modalCancelButton}
+          onPress={handleCancelAddBuilding}
+        >
+          <Text style={styles.modalCancelText}>Annuler</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.modalConfirmButton}
+          onPress={handleConfirmAddBuilding}
+        >
+          <Text style={styles.modalConfirmText}>Valider</Text>
+        </Pressable>
+      </View>
+    </View>
+  </View>
+</Modal>
+
+    </SafeAreaView>
+    );
+  }
+
+  const totals = getProjectTotals(project.id);
+
+  function handleAddBuilding() {
+    setBuildingName('');
+    setBuildingModalVisible(true);
+  }
+
+  function handleConfirmAddBuilding() {
+    addBuilding(project.id, buildingName.trim() || 'Nouveau bâtiment');
+    setBuildingModalVisible(false);
+    setBuildingName('');
+  }
+
+  function handleCancelAddBuilding() {
+    setBuildingModalVisible(false);
+    setBuildingName('');
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Projet</Text>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{project.clientName}</Text>
+          <Text style={styles.text}>{project.address}</Text>
+          <Text style={styles.text}>
+            {[project.postalCode, project.city].filter(Boolean).join(' ')}
+          </Text>
+          <Text style={styles.text}>{project.phone || 'Téléphone non renseigné'}</Text>
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>Résumé projet</Text>
+          <Text style={styles.metric}>Bâtiments : {totals.buildingCount}</Text>
+          <Text style={styles.metric}>Façades : {totals.facadeCount}</Text>
+          <Text style={styles.metric}>Toitures : {totals.roofCount}</Text>
+          <Text style={styles.metric}>Surface façades brute : {fmt(totals.grossFacadeAreaM2)} m²</Text>
+          <Text style={styles.metric}>Ouvrants : {fmt(totals.voidsAreaM2)} m²</Text>
+          <Text style={styles.metric}>Surface façades nette : {fmt(totals.netFacadeAreaM2)} m²</Text>
+          <Text style={styles.total}>Surface toitures : {fmt(totals.roofAreaM2)} m²</Text>
+        </View>
+
+        <Pressable style={styles.goldButton} onPress={handleAddBuilding}>
+          <Text style={styles.goldButtonText}>Ajouter un bâtiment</Text>
+        </Pressable>
+
+        {project.buildings.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Aucun bâtiment</Text>
+            <Text style={styles.emptyText}>
+              Ajoute un premier bâtiment pour y rattacher des façades et des toitures.
+            </Text>
+          </View>
+        ) : null}
+
+        {project.buildings.map((building, index) => (
+          <View key={building.id} style={styles.card}>
+            <Text style={styles.sectionTitle}>
+              {building.name || `Bâtiment ${index + 1}`}
+            </Text>
+
+            <Text style={styles.metric}>Façades : {building.facades.length}</Text>
+            <Text style={styles.metric}>Toitures : {building.roofs.length}</Text>
+
+            <View style={styles.actionsRow}>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() =>
+                  router.push({
+                    pathname: '/project-facade-pointing',
+                    params: {
+                      projectId: project.id,
+                      buildingId: building.id,
+                    },
+                  })
+                }
+              >
+                <Text style={styles.secondaryButtonText}>Ajouter une façade</Text>
+              </Pressable>
+ <Pressable
+                style={styles.secondaryButton}
+                onPress={() =>
+                  router.push({
+                    pathname: '/project-roof-pointing',
+                    params: {
+                      projectId: project.id,
+                      buildingId: building.id,
+                    },
+                  })
+                }
+              >
+
+             
+                <Text style={styles.secondaryButtonText}>Ajouter une toiture</Text>
+              </Pressable>
+            </View>
+
+            {building.facades.length > 0 ? (
+              <View style={styles.subList}>
+                {building.facades.map((facade) => (
+                  <View key={facade.id} style={styles.subCard}>
+                    <Text style={styles.subTitle}>{facade.name}</Text>
+                    <Text style={styles.subMetric}>Brute : {fmt(facade.grossAreaM2)} m²</Text>
+                    <Text style={styles.subMetric}>Ouvrants : {fmt(facade.voidsAreaM2)} m²</Text>
+                    <Text style={styles.subMetric}>Nette : {fmt(facade.netAreaM2)} m²</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {building.roofs.length > 0 ? (
+              <View style={styles.subList}>
+                {building.roofs.map((roof) => (
+                  <View key={roof.id} style={styles.subCard}>
+                    <Text style={styles.subTitle}>{roof.name}</Text>
+                    <Text style={styles.subMetric}>Surface : {fmt(roof.areaM2)} m²</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ))}
+      </ScrollView>
+    
+      <Modal
+        visible={buildingModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancelAddBuilding}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Nom du bâtiment</Text>
+
+            <TextInput
+              value={buildingName}
+              onChangeText={setBuildingName}
+              placeholder="Ex : Maison principale"
+              placeholderTextColor="#8C8C93"
+              style={styles.modalInput}
+              autoFocus
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelButton} onPress={handleCancelAddBuilding}>
+                <Text style={styles.modalCancelText}>Annuler</Text>
+              </Pressable>
+
+              <Pressable style={styles.modalConfirmButton} onPress={handleConfirmAddBuilding}>
+                <Text style={styles.modalConfirmText}>Valider</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F6F3EE',
+  },
+  content: {
+    padding: 16,
+    gap: 14,
+    paddingBottom: 40,
+  },
+  centerWrap: {
+    flex: 1,
+    padding: 16,
+    justifyContent: 'center',
+    gap: 16,
+  },
+modalOverlay: {
+  flex: 1,
+  backgroundColor: 'rgba(0,0,0,0.35)',
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 24,
+},
+
+modalCard: {
+  width: '100%',
+  maxWidth: 420,
+  backgroundColor: '#FFFFFF',
+  borderRadius: 20,
+  padding: 20,
+  borderWidth: 1,
+  borderColor: '#E2D7C3',
+  shadowColor: '#000',
+  shadowOpacity: 0.12,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 },
+  elevation: 8,
+},
+
+modalTitle: {
+  fontSize: 22,
+  fontWeight: '900',
+  color: '#1C1C1E',
+  marginBottom: 14,
+},
+
+modalInput: {
+  height: 50,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: '#E2D7C3',
+  backgroundColor: '#F7F7F9',
+  paddingHorizontal: 14,
+  fontSize: 16,
+  color: '#1C1C1E',
+},
+
+modalActions: {
+  flexDirection: 'row',
+  gap: 10,
+  marginTop: 18,
+},
+
+modalCancelButton: {
+  flex: 1,
+  height: 48,
+  borderRadius: 14,
+  backgroundColor: '#E7E2D9',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+
+modalCancelText: {
+  fontSize: 16,
+  fontWeight: '800',
+  color: '#1C1C1E',
+},
+
+modalConfirmButton: {
+  flex: 1,
+  height: 48,
+  borderRadius: 14,
+  backgroundColor: '#D4AF37',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+
+modalConfirmText: {
+  fontSize: 16,
+  fontWeight: '900',
+  color: '#111111',
+},
+  title: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#1C1C1E',
+    marginBottom: 4,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
+    gap: 8,
+  },
+  summaryCard: {
+    backgroundColor: '#EFE8DB',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
+    gap: 8,
+  },
+  emptyCard: {
+    backgroundColor: '#EFE8DB',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
+    gap: 6,
+  },
+  emptyTitle: {
+    color: '#1C1C1E',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  emptyText: {
+    color: '#5A5A5E',
+    fontSize: 14,
+  },
+  cardTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#1C1C1E',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1C1C1E',
+    marginBottom: 6,
+  },
+  text: {
+    fontSize: 15,
+    color: '#5A5A5E',
+  },
+  metric: {
+    fontSize: 15,
+    color: '#3A3A3C',
+  },
+  total: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#B8962E',
+    marginTop: 4,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: '#E7E2D9',
+    borderRadius: 16,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#1C1C1E',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  goldButton: {
+    backgroundColor: '#D4AF37',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  goldButtonText: {
+    color: '#111111',
+    fontWeight: '900',
+    fontSize: 17,
+  },
+  subList: {
+    marginTop: 10,
+    gap: 8,
+  },
+  subCard: {
+    backgroundColor: '#F8F6F1',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E8DECD',
+  },
+  subTitle: {
+    color: '#1C1C1E',
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  subMetric: {
+    color: '#5A5A5E',
+    fontSize: 13,
+  },
+});

@@ -1,84 +1,156 @@
-import { Link } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
-import { AppShell } from '@/components/AppShell';
-import { Card } from '@/components/Card';
-import { Title, Subtitle, Muted, Label } from '@/components/Typography';
-import { StatPill } from '@/components/StatPill';
-import { colors } from '@/lib/theme';
-import { missions } from '@/data/mock';
+import React from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import GlideScreen from '../../components/glide/GlideScreen';
 
-const shortcuts = [
-  { href: '/(tabs)/dilution', title: 'Dilution flash', subtitle: 'Produit pur, eau, coût/m²' },
-  { href: '/(tabs)/pricing', title: 'Calcul prix mission', subtitle: 'Revient, marge, TTC' },
-  { href: '/(tabs)/surface', title: 'Surface toiture', subtitle: 'Calcul sur le terrain' },
-  { href: '/(tabs)/agenda', title: 'Mon agenda', subtitle: 'Chantiers et suivi' },
-  { href: '/(tabs)/profile', title: 'Ressources', subtitle: 'Produits, charges, matériel' },
-];
+function QuickCard({
+  title,
+  subtitle,
+  icon,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.card} onPress={onPress}>
+      <View style={styles.iconWrap}>
+        <Ionicons name={icon} size={22} color="#9B7414" />
+      </View>
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardSubtitle}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#A0A0A8" />
+    </Pressable>
+  );
+}
 
 export default function HomeScreen() {
+  const router = useRouter();
+
   return (
-    <AppShell>
-      <Title>FLY-WASH</Title>
-      <Muted>Application métier de calcul, dilution et rentabilité pour le nettoyage de surface.</Muted>
-
-      <Card>
-        <Subtitle>Vue rapide</Subtitle>
-        <View style={styles.row}>
-          <StatPill label="Missions" value="2" />
-          <StatPill label="Surface mois" value="3 320 m²" />
-          <StatPill label="CA prévu" value="8 560 €" />
+    <GlideScreen title="Accueil">
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.hero}>
+          <Text style={styles.heroTitle}>Fly-Wash</Text>
+          <Text style={styles.heroSubtitle}>
+            Accès rapide à la dilution, aux calculs de surface et au prix de revient.
+          </Text>
         </View>
-      </Card>
 
-      <Card>
-        <Subtitle>Priorité terrain</Subtitle>
-        <Link href="/(tabs)/dilution" asChild>
-          <Text style={styles.heroButton}>Préparer ma cuve</Text>
-        </Link>
-        <Muted>Accès direct au calcul de dilution flash, pensé pour un usage rapide sur chantier.</Muted>
-      </Card>
+        <Text style={styles.sectionTitle}>Outils essentiels</Text>
 
-      <Subtitle>Modules</Subtitle>
-      {shortcuts.map((item) => (
-        <Link key={item.title} href={item.href as any} asChild>
-          <View style={styles.shortcut}>
-            <Label>{item.title}</Label>
-            <Muted>{item.subtitle}</Muted>
-          </View>
-        </Link>
-      ))}
+        <QuickCard
+          title="Dilution"
+          subtitle="Préparer les mélanges et ratios"
+          icon="water-outline"
+          onPress={() => router.push('/dilution')}
+        />
+        <QuickCard
+          title="Calcul surface"
+          subtitle="Toiture, terrain, pente et surface réelle"
+          icon="layers-outline"
+          onPress={() => router.push('/surface')}
+        />
+        <QuickCard
+          title="Calcul prix"
+          subtitle="Prix de revient et prix de vente"
+          icon="calculator-outline"
+          onPress={() => router.push('/pricing')}
+        />
 
-      <Subtitle>Prochains chantiers</Subtitle>
-      {missions.map((mission) => (
-        <Card key={mission.id}>
-          <Label>{mission.client}</Label>
-          <Muted>{mission.date} • {mission.type} • {mission.surface} m²</Muted>
-          <Text style={styles.amount}>{mission.totalTtc.toLocaleString('fr-FR')} € TTC</Text>
-        </Card>
-      ))}
-    </AppShell>
+        <View style={styles.noteCard}>
+          <Text style={styles.noteTitle}>Menu latéral</Text>
+          <Text style={styles.noteText}>
+            Utilise le bouton hamburger en haut à gauche pour accéder à Mes charges,
+            Mes véhicules, Mon matériel, Mes produits, Profil et Business.
+          </Text>
+        </View>
+      </ScrollView>
+    </GlideScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
-  heroButton: {
-    backgroundColor: colors.gold,
-    color: '#111',
-    textAlign: 'center',
-    fontWeight: '800',
-    paddingVertical: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginTop: 6,
+  content: {
+    padding: 16,
+    gap: 14,
+    paddingBottom: 40,
   },
-  shortcut: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
+  hero: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
+    borderColor: '#ECECEF',
+    gap: 6,
+  },
+  heroTitle: {
+    color: '#1B1B1F',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  heroSubtitle: {
+    color: '#6F6F78',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  sectionTitle: {
+    color: '#9B7414',
+    fontSize: 15,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    paddingHorizontal: 2,
+    marginTop: 4,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
     borderRadius: 18,
     padding: 16,
-    gap: 4,
+    borderWidth: 1,
+    borderColor: '#ECECEF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  amount: { color: colors.goldSoft, fontWeight: '800', fontSize: 18 },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#F5EED7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardTitle: {
+    color: '#1B1B1F',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  cardSubtitle: {
+    color: '#6F6F78',
+    fontSize: 13,
+  },
+  noteCard: {
+    backgroundColor: '#FFF9EB',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#F0E0AD',
+    gap: 6,
+  },
+  noteTitle: {
+    color: '#7B5D14',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  noteText: {
+    color: '#7B6A37',
+    fontSize: 14,
+    lineHeight: 20,
+  },
 });
