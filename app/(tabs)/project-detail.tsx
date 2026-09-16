@@ -14,6 +14,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions, useNavigation } from 'expo-router/react-navigation';
 import { useProjectStore } from '../../lib/projectStore';
+import { loadCompanyProfile } from '../../lib/companyStore';
+import { reserveNextDevisNumber } from '../../lib/companyStore';
+import { generateDevisPdf } from '../../lib/devisExport';
 
 const fmt = (v: number) => v.toFixed(2).replace('.', ',');
 
@@ -28,8 +31,10 @@ export default function ProjectDetailScreen() {
   const deleteProject = useProjectStore((state) => state.deleteProject);
   const getProjectTotals = useProjectStore((state) => state.getProjectTotals);
   const setProjectStatus = useProjectStore(state => state.setProjectStatus);
+  const updateProject = useProjectStore((state) => state.updateProject);
   const [buildingModalVisible, setBuildingModalVisible] = useState(false);
   const [buildingName, setBuildingName] = useState('');
+  const [generatingDevis, setGeneratingDevis] = useState(false);
 
   if (!foundProject) {
     return (
@@ -114,6 +119,36 @@ export default function ProjectDetailScreen() {
     });
   }
 
+  async function handleGenerateDevis() {
+    if (!project.quoteAmount) {
+      Alert.alert(
+        'Projet non chiffré',
+        'Chiffre le projet avant de générer le devis.'
+      );
+      return;
+    }
+
+    setGeneratingDevis(true);
+    try {
+      const company = await loadCompanyProfile();
+
+      let devisNumber = project.devisNumber;
+      let devisDate = project.devisDate;
+
+      if (!devisNumber) {
+        devisNumber = await reserveNextDevisNumber();
+        devisDate = new Date().toISOString();
+        updateProject(project.id, { devisNumber, devisDate });
+      }
+
+      await generateDevisPdf({ ...project, devisNumber, devisDate }, company);
+    } catch (error) {
+      Alert.alert('Erreur', "Impossible de générer le devis PDF pour le moment.");
+    } finally {
+      setGeneratingDevis(false);
+    }
+  }
+
 return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -145,6 +180,9 @@ return (
           <Text style={styles.metric}>Ouvrants : {fmt(totals.voidsAreaM2)} m²</Text>
           <Text style={styles.total}>Surface façades : {fmt(totals.netFacadeAreaM2)} m²</Text>
           <Text style={styles.total}>Surface toitures : {fmt(totals.roofAreaM2)} m²</Text>
+          {!!project.quoteAmount && (
+            <Text style={styles.total}>Devis HT : {fmt(project.quoteAmount)} €</Text>
+          )}
         </View>
 
         <Pressable style={styles.goldButton} onPress={handleAddBuilding}>
@@ -230,6 +268,18 @@ return (
   <Text style={styles.quoteButtonText}>Chiffrer le projet</Text>
 </Pressable>
 </View>
+
+{!!project.quoteAmount && (
+  <Pressable
+    style={[styles.devisButtonFull, generatingDevis && styles.devisButtonDisabled]}
+    onPress={handleGenerateDevis}
+    disabled={generatingDevis}
+  >
+    <Text style={styles.devisButtonText}>
+      {generatingDevis ? 'Génération…' : 'Générer le devis PDF'}
+    </Text>
+  </Pressable>
+)}
 
       </ScrollView>
 
@@ -357,6 +407,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   quoteButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
+  devisButtonFull: {
+    marginTop: 10,
+    backgroundColor: '#C79A2B',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  devisButtonDisabled: { opacity: 0.6 },
+  devisButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
   cancelButton: {
     flex: 1,
     backgroundColor: '#E7E2D9',

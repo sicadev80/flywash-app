@@ -18,6 +18,7 @@ import {
 } from '../../lib/equipmentStore';
 import PricingProductsDilutionCard from '../../components/pricing/PricingProductsDilutionCard';
 import { useProjectStore } from '../../lib/projectStore';
+import { loadCompanyProfile } from '../../lib/companyStore';
 
 type StepKey = 'mission' | 'trajet' | 'produits' | 'vente' | 'detail';
 
@@ -189,12 +190,13 @@ export default function PricingTunnelV3Screen() {
 
   useEffect(() => {
     (async () => {
-      const [loadedItems, config, loadedProducts, loadedVehicles, loadedEquipment] = await Promise.all([
+      const [loadedItems, config, loadedProducts, loadedVehicles, loadedEquipment, company] = await Promise.all([
         loadFixedCostItems(),
         loadFixedCostsConfig(),
         loadProducts(),
         loadVehicles(),
         loadEquipment(),
+        loadCompanyProfile(),
       ]);
       setFixedCostItems(loadedItems);
       setFixedCostsConfig(config);
@@ -202,6 +204,14 @@ export default function PricingTunnelV3Screen() {
       setVehicles(loadedVehicles);
       setSelectedVehicleId(loadedVehicles[0]?.id || '');
       setEquipment(loadedEquipment);
+
+      if (project?.vatRate != null) {
+        setVatPercent(String(project.vatRate));
+      } else if (company.vatStatus === 'non-assujetti') {
+        setVatPercent('0');
+      } else {
+        setVatPercent(String(company.defaultVatRate));
+      }
     })();
   }, []);
 
@@ -405,6 +415,9 @@ function handleValidatePricing() {
 
   updateProject(projectId, {
     quoteAmount: saleHT,
+    vatRate: n(vatPercent),
+    pricePerM2Ht: htPerM2,
+    hoursPerM2: totalSurface > 0 ? effectiveHours / totalSurface : 0,
 
     roofProductsSummary: hasRoof
       ? {
