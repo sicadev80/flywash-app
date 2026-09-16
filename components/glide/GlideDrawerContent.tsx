@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DrawerContentComponentProps, DrawerContentScrollView } from 'expo-router/drawer';
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname } from 'expo-router';
+import { loadContactProfile } from '../../lib/contactStore';
 
 const GOLD = '#C79A2B';
 const TEXT = '#18181C';
@@ -29,6 +30,17 @@ function MenuItem({
 
 export default function GlideDrawerContent(props: DrawerContentComponentProps) {
   const pathname = usePathname();
+  const [contact, setContact] = useState({ name: 'Fly-Wash', email: 'sicadrones@gmail.com' });
+
+  useEffect(() => {
+    loadContactProfile().then((profile) => {
+      const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
+      setContact({
+        name: name || 'Fly-Wash',
+        email: profile.email || 'sicadrones@gmail.com',
+      });
+    });
+  }, []);
 
   function go(path: string) {
     props.navigation.closeDrawer();
@@ -57,7 +69,12 @@ export default function GlideDrawerContent(props: DrawerContentComponentProps) {
         <MenuItem label="Mes devis en cours" icon="document-text-outline" onPress={() => router.push('/quotes')} />
         <MenuItem label="Mes chantiers à planifier" icon="time-outline" onPress={() => router.push('/to-plan')} />
         <MenuItem label="Planning" icon="calendar-outline" onPress={() => router.push('/planning')} />
-     
+        <MenuItem
+          label="Archive"
+          icon="archive-outline"
+          focused={pathname === '/archive'}
+          onPress={() => go('/archive')}
+        />
   </View>
       <View style={styles.sectionTitleWrap}>
         <Text style={styles.sectionTitle}>Business</Text>
@@ -68,6 +85,12 @@ export default function GlideDrawerContent(props: DrawerContentComponentProps) {
         <MenuItem label="Mes véhicules" icon="car-outline" focused={pathname === '/vehicles'} onPress={() => go('/vehicles')} />
         <MenuItem label="Mon matériel" icon="construct-outline" focused={pathname === '/equipment'} onPress={() => go('/equipment')} />
         <MenuItem label="Mes produits" icon="flask-outline" focused={pathname === '/products'} onPress={() => go('/products')} />
+        <MenuItem
+          label="Résumé"
+          icon="bar-chart-outline"
+          focused={pathname === '/revenue-summary'}
+          onPress={() => go('/revenue-summary')}
+        />
       </View>
 
       <View style={styles.sectionTitleWrap}>
@@ -75,7 +98,24 @@ export default function GlideDrawerContent(props: DrawerContentComponentProps) {
       </View>
 
       <View style={styles.section}>
-        <MenuItem label="Profil" icon="person-outline" focused={pathname === '/profile'} onPress={() => go('/profile')} />
+        <MenuItem
+          label="Informations de contact"
+          icon="id-card-outline"
+          focused={pathname === '/contact-profile'}
+          onPress={() => go('/contact-profile')}
+        />
+        <MenuItem
+          label="Informations de société"
+          icon="business-outline"
+          focused={pathname === '/profile'}
+          onPress={() => go('/profile')}
+        />
+        <MenuItem
+          label="Mon offre actuelle"
+          icon="sparkles-outline"
+          focused={pathname === '/subscription'}
+          onPress={() => go('/subscription')}
+        />
       </View>
 
       <View style={styles.footerCard}>
@@ -83,8 +123,8 @@ export default function GlideDrawerContent(props: DrawerContentComponentProps) {
           <Text style={styles.logoTextSmall}>FW</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.footerName}>Fly-Wash</Text>
-          <Text style={styles.footerMail}>sicadrones@gmail.com</Text>
+          <Text style={styles.footerName}>{contact.name}</Text>
+          <Text style={styles.footerMail}>{contact.email}</Text>
         </View>
         <Ionicons name="ellipsis-vertical" size={18} color={MUTED} />
       </View>

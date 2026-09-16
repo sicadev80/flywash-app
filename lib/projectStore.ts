@@ -1,5 +1,7 @@
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type FacadeItem = {
   id: string;
@@ -49,6 +51,7 @@ export type ProjectStatus =
   | 'approved'
   | 'scheduled'
   | 'completed'
+  | 'visit-scheduled'
   | 'refused'
   | 'archived';
 
@@ -66,8 +69,15 @@ export type ProjectItem = {
   quoteAmount?: number;
   scheduledFor?: string;
   completedAt?: string;
+  visitScheduledFor?: string;
+  visitCompletedAt?: string;
   roofProductsSummary?: ProductPreparationSummary | null;
   facadeProductsSummary?: ProductPreparationSummary | null;
+  vatRate?: number;
+  devisNumber?: string;
+  devisDate?: string;
+  pricePerM2Ht?: number;
+  hoursPerM2?: number;
 };
 
 type CreateProjectInput = {
@@ -81,6 +91,8 @@ type CreateProjectInput = {
 type ProjectStore = {
   projects: ProjectItem[];
   currentProjectId: string | null;
+  hasHydrated: boolean;
+  setHasHydrated: (value: boolean) => void;
 
   createProject: (input: CreateProjectInput) => string;
   setCurrentProject: (projectId: string | null) => void;
@@ -98,8 +110,15 @@ type ProjectStore = {
         | 'quoteAmount'
         | 'scheduledFor'
         | 'completedAt'
+        | 'visitScheduledFor'
+        | 'visitCompletedAt'
         | 'roofProductsSummary'
         | 'facadeProductsSummary'
+        | 'vatRate'
+        | 'devisNumber'
+        | 'devisDate'
+        | 'pricePerM2Ht'
+        | 'hoursPerM2'
       >
     >
   ) => void;
@@ -169,9 +188,13 @@ const uid = (prefix: string) =>
 
 const now = () => new Date().toISOString();
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set, get) => ({
   projects: [],
   currentProjectId: null,
+  hasHydrated: false,
+  setHasHydrated: (value) => set({ hasHydrated: value }),
 
   createProject: (input) => {
     const projectId = uid('project');
@@ -488,4 +511,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       roofAreaM2: roofList.reduce((sum, roof) => sum + roof.areaM2, 0),
     };
   },
-}));
+    }),
+    {
+      name: 'flywash_projects_v1',
+      storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      partialize: (state) => ({
+        projects: state.projects,
+        currentProjectId: state.currentProjectId,
+      }),
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('FlyWash : échec de restauration des projets depuis le stockage local.', error);
+        }
+        state?.setHasHydrated(true);
+      },
+    }
+  )
+);

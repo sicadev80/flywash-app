@@ -90,6 +90,9 @@ export default function TabsLayout() {
       <Tabs.Screen name="project-detail" options={{ href: null }} />
       <Tabs.Screen name="pricing" options={{ href: null }} />
       <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen name="contact-profile" options={{ href: null }} />
+      <Tabs.Screen name="subscription" options={{ href: null }} />
+      <Tabs.Screen name="revenue-summary" options={{ href: null }} />
       <Tabs.Screen name="business" options={{ href: null }} />
       <Tabs.Screen name="charges" options={{ href: null }} />
       <Tabs.Screen name="vehicles" options={{ href: null }} />

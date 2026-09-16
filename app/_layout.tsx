@@ -1,11 +1,55 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { Drawer } from 'expo-router/drawer';
 import { Ionicons } from '@expo/vector-icons';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import GlideDrawerContent from '../components/glide/GlideDrawerContent';
+import OnboardingScreen from '../components/onboarding/OnboardingScreen';
+import { isContactProfileComplete, loadContactProfile } from '../lib/contactStore';
+import { useProjectStore } from '../lib/projectStore';
 
 export default function RootLayout() {
+  // Tant qu'aucun profil de contact n'existe, on bloque sur l'écran de
+  // première configuration avant de laisser accéder au reste de l'appli.
+  // On attend aussi que projectStore ait fini de se restaurer depuis le
+  // stockage local pour éviter un flash d'écrans vides (listes de
+  // projets/devis/chantiers) avant que les données ne soient rechargées.
+  const [gate, setGate] = useState<'loading' | 'onboarding' | 'app'>('loading');
+  const [contactGate, setContactGate] = useState<'onboarding' | 'app' | null>(null);
+  const projectsHydrated = useProjectStore((state) => state.hasHydrated);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadContactProfile().then((profile) => {
+      if (cancelled) return;
+      setContactGate(isContactProfileComplete(profile) ? 'app' : 'onboarding');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (contactGate && projectsHydrated) {
+      setGate(contactGate);
+    }
+  }, [contactGate, projectsHydrated]);
+
+  if (gate === 'loading') {
+    return <View style={{ flex: 1, backgroundColor: '#F6F3EE' }} />;
+  }
+
+  if (gate === 'onboarding') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <OnboardingScreen onComplete={() => setGate('app')} />
+      </GestureHandlerRootView>
+    );
+  }
+
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <Drawer
       drawerContent={(props) => <GlideDrawerContent {...props} />}
       screenOptions={{
@@ -75,12 +119,34 @@ export default function RootLayout() {
       />
 
       <Drawer.Screen
+        name="(tabs)/contact-profile"
+        options={{
+          drawerLabel: 'Informations de contact',
+          title: 'Informations de contact',
+          drawerIcon: ({ color, size }) => (
+            <Ionicons name="id-card-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen
         name="(tabs)/profile"
         options={{
-          drawerLabel: 'Profil',
-          title: 'Profil',
+          drawerLabel: 'Informations de société',
+          title: 'Informations de société',
           drawerIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
+            <Ionicons name="business-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen
+        name="(tabs)/subscription"
+        options={{
+          drawerLabel: 'Mon offre actuelle',
+          title: 'Mon offre actuelle',
+          drawerIcon: ({ color, size }) => (
+            <Ionicons name="sparkles-outline" size={size} color={color} />
           ),
         }}
       />
@@ -140,7 +206,31 @@ export default function RootLayout() {
         }}
       />
 
+      <Drawer.Screen
+        name="archive"
+        options={{
+          drawerLabel: 'Archive',
+          title: 'Archive',
+          drawerIcon: ({ color, size }) => (
+            <Ionicons name="archive-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen
+        name="(tabs)/revenue-summary"
+        options={{
+          drawerLabel: 'Résumé',
+          title: 'Résumé',
+          drawerIcon: ({ color, size }) => (
+            <Ionicons name="bar-chart-outline" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Drawer.Screen name="archive-detail" options={{ drawerItemStyle: { display: 'none' } }} />
       <Drawer.Screen name="mission-detail" options={{ drawerItemStyle: { display: 'none' } }} />
     </Drawer>
+    </GestureHandlerRootView>
   );
 }

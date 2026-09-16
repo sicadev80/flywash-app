@@ -71,6 +71,10 @@ export default function MissionDetailScreen() {
   const [scheduledDate, setScheduledDate] = useState(isoToFrenchDate(foundProject?.scheduledFor));
   const [scheduledTime, setScheduledTime] = useState(isoToFrenchTime(foundProject?.scheduledFor));
 
+  const [visitModalVisible, setVisitModalVisible] = useState(false);
+  const [visitDate, setVisitDate] = useState('');
+  const [visitTime, setVisitTime] = useState('10:00');
+
   if (!foundProject) {
     return (
       <GlideScreen title="Mission" style={styles.screen}>
@@ -115,13 +119,32 @@ export default function MissionDetailScreen() {
           text: 'Clôturer',
           style: 'default',
           onPress: () => {
-            updateProject(project.id, { completedAt: new Date().toISOString() });
-            setProjectStatus(project.id, 'completed');
-            router.replace('/planning');
+            setVisitDate('');
+            setVisitTime('10:00');
+            setVisitModalVisible(true);
           },
         },
       ]
     );
+  }
+
+  function handleSkipVisit() {
+    updateProject(project.id, { completedAt: new Date().toISOString() });
+    setProjectStatus(project.id, 'completed');
+    setVisitModalVisible(false);
+    router.replace('/archive');
+  }
+
+  function handleConfirmVisit() {
+    const iso = toIsoFromFrench(visitDate, visitTime);
+    if (!iso) {
+      Alert.alert('Date invalide', 'Saisis une date JJ/MM/AAAA et une heure HH:MM.');
+      return;
+    }
+    updateProject(project.id, { completedAt: new Date().toISOString(), visitScheduledFor: iso });
+    setProjectStatus(project.id, 'visit-scheduled');
+    setVisitModalVisible(false);
+    router.replace('/planning');
   }
 
   const roofPrep = project.roofProductsSummary;
@@ -251,6 +274,45 @@ export default function MissionDetailScreen() {
 
               <Pressable style={styles.modalConfirmButton} onPress={handleConfirmReplan}>
                 <Text style={styles.modalConfirmText}>Valider</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={visitModalVisible} transparent animationType="fade" onRequestClose={() => setVisitModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Visite de suivi</Text>
+            <Text style={styles.helperText}>
+              Tu peux programmer une visite pour contrôler le résultat dans le temps, ou archiver directement ce chantier.
+            </Text>
+
+            <Text style={styles.label}>Date</Text>
+            <TextInput
+              style={styles.input}
+              value={visitDate}
+              onChangeText={setVisitDate}
+              placeholder="Ex : 12/04/2026"
+              placeholderTextColor="#8C8C93"
+            />
+
+            <Text style={styles.label}>Heure</Text>
+            <TextInput
+              style={styles.input}
+              value={visitTime}
+              onChangeText={setVisitTime}
+              placeholder="Ex : 10:00"
+              placeholderTextColor="#8C8C93"
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelButton} onPress={handleSkipVisit}>
+                <Text style={styles.modalCancelText}>Archiver sans visite</Text>
+              </Pressable>
+
+              <Pressable style={styles.modalConfirmButton} onPress={handleConfirmVisit}>
+                <Text style={styles.modalConfirmText}>Programmer la visite</Text>
               </Pressable>
             </View>
           </View>
