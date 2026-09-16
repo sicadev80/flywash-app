@@ -18,6 +18,7 @@ import { polygonAreaSquareMeters, type LatLng } from '../../../lib/polygonArea';
 import { calcFlatSlope } from '../../../lib/surfaceCalculations';
 import { setPendingSurface } from '../../../lib/surfaceTransferStore';
 import { getPendingTerrainState, setPendingTerrainState } from '../../../lib/terrainStateStore';
+import { findBuildingFootprintAt } from '../../../lib/ignBuildingLookup';
 
 const DEFAULT_REGION: Region = {
   latitude: 48.8566,
@@ -41,6 +42,7 @@ export default function TerrainSurfaceScreen() {
   const [showIgnOrtho, setShowIgnOrtho] = useState(false);
   const [showCadastre, setShowCadastre] = useState(false);
   const [mapResetKey, setMapResetKey] = useState(0);
+  const [buildingLookupLoading, setBuildingLookupLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -174,10 +176,57 @@ export default function TerrainSurfaceScreen() {
     router.push('/inclinometer');
   }
 
+  function regionForPoints(pts: LatLng[]): Region {
+    const lats = pts.map((p) => p.latitude);
+    const lngs = pts.map((p) => p.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max((maxLat - minLat) * 1.8, 0.00008),
+      longitudeDelta: Math.max((maxLng - minLng) * 1.8, 0.00008),
+    };
+  }
+
+  async function handleSelectBuildingAt(coordinate: LatLng) {
+    if (buildingLookupLoading) return;
+    setBuildingLookupLoading(true);
+    try {
+      const footprint = await findBuildingFootprintAt(coordinate);
+      if (!footprint) {
+        Alert.alert(
+          'Bâtiment introuvable',
+          "Aucun contour de bâtiment IGN trouvé à cet endroit. Essaie de taper plus précisément sur le bâtiment, ou désactive Cadastre pour tracer les points manuellement."
+        );
+        return;
+      }
+      setPoints(footprint);
+      setClosed(true);
+      setRegion(regionForPoints(footprint));
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {}
+    } catch {
+      Alert.alert(
+        'Erreur réseau',
+        "Impossible d'interroger le service IGN pour le moment. Réessaie, ou désactive Cadastre pour tracer les points manuellement."
+      );
+    } finally {
+      setBuildingLookupLoading(false);
+    }
+  }
+
   return (
     <GlideScreen title="Terrain">
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.subtitle}>Déplace la carte sous le viseur puis ajoute les points.</Text>
+        <Text style={styles.subtitle}>
+          {showCadastre
+            ? "Appuie directement sur le bâtiment : son contour cadastral (murs) remplit le polygone."
+            : 'Déplace la carte sous le viseur puis ajoute les points.'}
+        </Text>
 
         <View style={styles.toggleWrap}>
           <Toggle active={baseLayer === 'satellite'} label="Satellite" onPress={() => setBaseLayer('satellite')} />
@@ -200,6 +249,8 @@ export default function TerrainSurfaceScreen() {
             onZoomIn={zoomIn}
             onZoomOut={zoomOut}
             onFitPolygon={fitPolygon}
+            onMapPress={handleSelectBuildingAt}
+            buildingLookupLoading={buildingLookupLoading}
           />
         </View>
 

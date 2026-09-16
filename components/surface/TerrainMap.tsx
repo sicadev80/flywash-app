@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, {
   Marker,
@@ -9,6 +9,15 @@ import MapView, {
   UrlTile,
 } from 'react-native-maps';
 import type { LatLng } from '../../lib/polygonArea';
+
+// Pendant le glisser d'un point déjà posé, on zoome directement la vraie
+// carte satellite autour de ce point (plutôt qu'une loupe séparée, jugée peu
+// intuitive) pour viser précisément, puis on revient au niveau de zoom
+// d'avant le glisser une fois le point relâché.
+const DRAG_ZOOM_FACTOR = 4;
+const DRAG_ZOOM_MIN_DELTA = 0.00002;
+const DRAG_ZOOM_ANIMATION_MS = 220;
+const DRAG_UNZOOM_ANIMATION_MS = 260;
 
 type Props = {
   region: Region;
@@ -23,6 +32,11 @@ type Props = {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onFitPolygon: () => void;
+  // Quand la couche Cadastre est active, on bascule sur la sélection directe
+  // du bâtiment IGN (tap sur la carte) plutôt que le pointage manuel au
+  // viseur — onMapPress reçoit alors la coordonnée tapée.
+  onMapPress?: (coordinate: LatLng) => void;
+  buildingLookupLoading?: boolean;
 };
 
 const IGN_ORTHO_WMTS =
@@ -44,10 +58,41 @@ export function TerrainMap({
   onZoomIn,
   onZoomOut,
   onFitPolygon,
+  onMapPress,
+  buildingLookupLoading = false,
 }: Props) {
+  const mapRef = useRef<MapView>(null);
+  const preDragRegionRef = useRef<Region | null>(null);
+  const [isDraggingPoint, setIsDraggingPoint] = useState(false);
+
+  function handleDragStart(coordinate: LatLng) {
+    preDragRegionRef.current = region;
+    setIsDraggingPoint(true);
+
+    const zoomedRegion: Region = {
+      latitude: coordinate.latitude,
+      longitude: coordinate.longitude,
+      latitudeDelta: Math.max(region.latitudeDelta / DRAG_ZOOM_FACTOR, DRAG_ZOOM_MIN_DELTA),
+      longitudeDelta: Math.max(region.longitudeDelta / DRAG_ZOOM_FACTOR, DRAG_ZOOM_MIN_DELTA),
+    };
+    mapRef.current?.animateToRegion(zoomedRegion, DRAG_ZOOM_ANIMATION_MS);
+  }
+
+  function handleDragEnd(index: number, coordinate: LatLng) {
+    onDragPoint(index, coordinate);
+    setIsDraggingPoint(false);
+
+    const previousRegion = preDragRegionRef.current;
+    preDragRegionRef.current = null;
+    if (previousRegion) {
+      mapRef.current?.animateToRegion(previousRegion, DRAG_UNZOOM_ANIMATION_MS);
+    }
+  }
+
   return (
     <View style={styles.wrap}>
       <MapView
+        ref={mapRef}
         key={mapKey}
         style={styles.map}
         provider={PROVIDER_DEFAULT}
@@ -56,6 +101,7 @@ export function TerrainMap({
         mapType={baseLayer}
         maxZoomLevel={25}
         minZoomLevel={3}
+        onPress={showCadastre && onMapPress ? (e) => onMapPress(e.nativeEvent.coordinate) : undefined}
       >
         {showIgnOrtho ? (
           <UrlTile
@@ -82,7 +128,8 @@ export function TerrainMap({
     key={`${point.latitude}-${point.longitude}-${index}`}
     coordinate={point}
     draggable
-    onDragEnd={(e) => onDragPoint(index, e.nativeEvent.coordinate)}
+    onDragStart={(e) => handleDragStart(e.nativeEvent.coordinate)}
+    onDragEnd={(e) => handleDragEnd(index, e.nativeEvent.coordinate)}
   >
     <View style={styles.pointBadge}>
       <Text style={styles.pointBadgeText}>{index + 1}</Text>
@@ -104,12 +151,14 @@ export function TerrainMap({
         ) : null}
       </MapView>
 
-      <View pointerEvents="none" style={styles.crosshairWrap}>
-        <View style={styles.crosshairCircle}>
-          <View style={styles.crosshairH} />
-          <View style={styles.crosshairV} />
+      {!showCadastre ? (
+        <View pointerEvents="none" style={styles.crosshairWrap}>
+          <View style={styles.crosshairCircle}>
+            <View style={styles.crosshairH} />
+            <View style={styles.crosshairV} />
+          </View>
         </View>
-      </View>
+      ) : null}
 
       <View style={styles.zoomControls}>
         <Pressable style={styles.zoomButton} onPress={onZoomIn}>
@@ -124,8 +173,20 @@ export function TerrainMap({
       </View>
 
       <View style={styles.helpBadge}>
-        <Text style={styles.helpText}>Déplace la carte sous le viseur, puis ajoute un point</Text>
+        <Text style={styles.helpText}>
+          {isDraggingPoint
+            ? 'Vise précisément puis relâche pour valider'
+            : showCadastre
+            ? 'Appuie sur le bâtiment pour sélectionner son contour'
+            : 'Déplace la carte sous le viseur, puis ajoute un point'}
+        </Text>
       </View>
+
+      {buildingLookupLoading ? (
+        <View pointerEvents="none" style={styles.loadingBadge}>
+          <Text style={styles.loadingText}>Recherche du bâtiment…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -243,5 +304,21 @@ pointBadgeText: {
   fontSize: 11,
   fontWeight: '900',
   color: '#111111',
+},
+loadingBadge: {
+  position: 'absolute',
+  top: 10,
+  left: 10,
+  backgroundColor: 'rgba(15,15,16,0.88)',
+  borderWidth: 1,
+  borderColor: '#D4AF37',
+  borderRadius: 12,
+  paddingHorizontal: 10,
+  paddingVertical: 8,
+},
+loadingText: {
+  color: '#D4AF37',
+  fontSize: 12,
+  fontWeight: '700',
 },
 });

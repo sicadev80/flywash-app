@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
   LayoutChangeEvent,
-  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,18 +10,28 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useQuickMeasurementStore } from '../lib/quickMeasurementStore';
+import { usePinchZoomPan } from '../hooks/usePinchZoomPan';
 
 type Point = { x: number; y: number };
 type Mode = 'facade' | 'opening' | 'scale';
 type Segment = { key: string; left: number; top: number; width: number; angle: number };
+type Step = 1 | 2 | 3 | 4;
 
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.25;
+
+const STEP_LABELS: Record<Step, string> = {
+  1: 'Photo',
+  2: 'Façade',
+  3: 'Ouvrants',
+  4: 'Échelle',
+};
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const formatNumber = (value: number, digits = 2) => value.toFixed(digits).replace('.', ',');
@@ -94,18 +103,16 @@ export default function FacadePhotoPolygonPointingScreen() {
   const addFacade = useQuickMeasurementStore((state) => state.addFacade);
   const facadesCount = useQuickMeasurementStore((state) => state.facades.length);
 
+  const [step, setStep] = useState<Step>(1);
   const [name, setName] = useState(`Façade ${facadesCount + 1}`);
   const [imageUri, setImageUri] = useState('');
   const [imageVersion, setImageVersion] = useState(0);
   const [imageNatural, setImageNatural] = useState({ width: 1, height: 1 });
   const [imageBox, setImageBox] = useState({ width: 1, height: 1 });
 
-  const [mode, setMode] = useState<Mode>('facade');
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scrollEnabled, setScrollEnabled] = useState(true);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const offsetRef = useRef({ x: 0, y: 0 });
 
   const [facadePoints, setFacadePoints] = useState<Point[]>([]);
   const [openingDraft, setOpeningDraft] = useState<Point[]>([]);
@@ -113,6 +120,11 @@ export default function FacadePhotoPolygonPointingScreen() {
   const [scalePoints, setScalePoints] = useState<Point[]>([]);
   const [realDistanceMeters, setRealDistanceMeters] = useState('1,00');
 
+  // Le mode de pointage découle directement de l'étape en cours : le
+  // parcours est volontairement forcé (photo -> façade -> ouvrants ->
+  // échelle) pour rester lisible sur le terrain, sans sélecteur de mode
+  // séparé qui obligeait à comprendre l'ordre à l'avance.
+  const mode: Mode = step === 3 ? 'opening' : step === 4 ? 'scale' : 'facade';
 
   useFocusEffect(
     useCallback(() => {
@@ -133,9 +145,18 @@ export default function FacadePhotoPolygonPointingScreen() {
     Image.getSize(
       imageUri,
       (width, height) => {
-        if (width > 0 && height > 0) {
-          setImageNatural({ width, height });
-        }
+        if (width <= 0 || height <= 0) return;
+        setImageNatural((current) => {
+          // On ne fait confiance à Image.getSize que si ImagePicker n'a
+          // fourni aucune dimension exploitable : sur iOS, getSize peut
+          // renvoyer la taille brute du buffer AVANT rotation EXIF, ce qui
+          // inverse largeur/hauteur pour une photo prise en portrait. Avec
+          // resizeMode="stretch", ça étire l'image dans un cadre à la
+          // mauvaise proportion et donne un rendu flou/déformé alors que
+          // la photo d'origine est nette.
+          const alreadyTrusted = current.width > 1 && current.height > 1;
+          return alreadyTrusted ? current : { width, height };
+        });
       },
       () => {
         // Certains URI de galerie peuvent échouer ici selon la plateforme.
@@ -144,9 +165,6 @@ export default function FacadePhotoPolygonPointingScreen() {
     );
   }, [imageUri]);
 
-  useEffect(() => {
-    offsetRef.current = offset;
-  }, [offset]);
 
   const resetForNewImage = useCallback((payload: { uri: string; width?: number; height?: number }) => {
     const { uri, width, height } = payload;
@@ -160,13 +178,10 @@ export default function FacadePhotoPolygonPointingScreen() {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     setScrollEnabled(true);
-    dragStartRef.current = { x: 0, y: 0 };
-    offsetRef.current = { x: 0, y: 0 };
     setFacadePoints([]);
     setOpeningDraft([]);
     setOpeningPolygons([]);
     setScalePoints([]);
-    setMode('facade');
   }, []);
 
   const resetForNextFacade = useCallback(() => {
@@ -174,17 +189,15 @@ export default function FacadePhotoPolygonPointingScreen() {
     setImageUri('');
     setImageVersion((value) => value + 1);
     setImageNatural({ width: 1, height: 1 });
-    setMode('facade');
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     setScrollEnabled(true);
-    dragStartRef.current = { x: 0, y: 0 };
-    offsetRef.current = { x: 0, y: 0 };
     setFacadePoints([]);
     setOpeningDraft([]);
     setOpeningPolygons([]);
     setScalePoints([]);
     setRealDistanceMeters('1,00');
+    setStep(1);
   }, []);
 
   const pickFromCamera = useCallback(async () => {
@@ -195,9 +208,10 @@ export default function FacadePhotoPolygonPointingScreen() {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'] as any,
       quality: 1,
       allowsEditing: false,
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
@@ -218,9 +232,13 @@ export default function FacadePhotoPolygonPointingScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'] as any,
       quality: 1,
       allowsEditing: false,
+      // Sans ça, iOS peut renvoyer une représentation "compatible" recompressée
+      // et donc plus basse résolution au lieu de l'original — d'où le flou
+      // constaté sur les photos choisies dans la galerie.
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
@@ -284,42 +302,15 @@ export default function FacadePhotoPolygonPointingScreen() {
     return canvasToImagePoint(centerX, centerY);
   }, [canvasToImagePoint, imageBox.height, imageBox.width]);
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => !!imageUri,
-        onStartShouldSetPanResponderCapture: () => !!imageUri,
-        onMoveShouldSetPanResponder: (_, gestureState) => {
-          if (!imageUri) return false;
-          return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
-        },
-        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
-          if (!imageUri) return false;
-          return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: () => {
-          setScrollEnabled(false);
-          dragStartRef.current = offsetRef.current;
-        },
-        onPanResponderMove: (_, gestureState) => {
-          const nextOffset = {
-            x: dragStartRef.current.x + gestureState.dx,
-            y: dragStartRef.current.y + gestureState.dy,
-          };
-
-          offsetRef.current = nextOffset;
-          setOffset(nextOffset);
-        },
-        onPanResponderRelease: () => {
-          setScrollEnabled(true);
-        },
-        onPanResponderTerminate: () => {
-          setScrollEnabled(true);
-        },
-      }),
-    [imageUri]
-  );
+  const zoomPanGesture = usePinchZoomPan({
+    zoom,
+    setZoom,
+    offset,
+    setOffset,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
+    onGestureActiveChange: (active) => setScrollEnabled(!active),
+  });
 
   const facadeCanvasPoints = useMemo(
     () => facadePoints.map(imageToCanvasPoint),
@@ -438,9 +429,33 @@ export default function FacadePhotoPolygonPointingScreen() {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     setScrollEnabled(true);
-    dragStartRef.current = { x: 0, y: 0 };
-    offsetRef.current = { x: 0, y: 0 };
   }, []);
+
+  const isFacadeReadyToSave =
+    !!imageUri &&
+    facadePoints.length >= 3 &&
+    openingDraft.length === 0 &&
+    scalePoints.length === 2 &&
+    realDistance > 0;
+
+  const hasUnsavedProgress =
+    !!imageUri ||
+    facadePoints.length > 0 ||
+    openingDraft.length > 0 ||
+    openingPolygons.length > 0 ||
+    scalePoints.length > 0;
+
+  const commitFacade = useCallback(() => {
+    addFacade({
+      id: `facade_${Date.now()}`,
+      name: name.trim() || `Façade ${facadesCount + 1}`,
+      imageUri,
+      grossAreaM2,
+      voidsAreaM2,
+      netAreaM2,
+      createdAt: new Date().toISOString(),
+    });
+  }, [addFacade, facadesCount, grossAreaM2, imageUri, name, netAreaM2, voidsAreaM2]);
 
   const saveFacade = useCallback(() => {
     if (!imageUri) {
@@ -461,37 +476,252 @@ export default function FacadePhotoPolygonPointingScreen() {
     if (scalePoints.length !== 2 || realDistance <= 0) {
       Alert.alert(
         'Échelle manquante',
-        'Passe en mode Échelle, place 2 points sur une longueur connue, puis saisis la distance réelle.'
+        'Reviens à l’étape Échelle, place 2 points sur une longueur connue, puis saisis la distance réelle.'
       );
       return;
     }
 
-    addFacade({
-      id: `facade_${Date.now()}`,
-      name: name.trim() || `Façade ${facadesCount + 1}`,
-      imageUri,
-      grossAreaM2,
-      voidsAreaM2,
-      netAreaM2,
-      createdAt: new Date().toISOString(),
-    });
-
+    commitFacade();
     Alert.alert('Façade enregistrée', 'La façade a bien été ajoutée à la session chantier.');
     resetForNextFacade();
-  }, [
-    addFacade,
-    facadePoints.length,
-    facadesCount,
-    grossAreaM2,
-    imageUri,
-    name,
-    netAreaM2,
-    openingDraft.length,
-    realDistance,
-    resetForNextFacade,
-    scalePoints.length,
-    voidsAreaM2,
-  ]);
+  }, [commitFacade, facadePoints.length, imageUri, openingDraft.length, realDistance, resetForNextFacade, scalePoints.length]);
+
+  const goToSession = useCallback(() => {
+    if (!hasUnsavedProgress) {
+      router.push('/quick-measure-session');
+      return;
+    }
+
+    if (isFacadeReadyToSave) {
+      Alert.alert(
+        'Façade non enregistrée',
+        'Cette façade n’a pas encore été ajoutée à la session. Veux-tu l’enregistrer avant de continuer ?',
+        [
+          { text: 'Annuler', style: 'cancel' },
+          {
+            text: 'Continuer sans enregistrer',
+            style: 'destructive',
+            onPress: () => router.push('/quick-measure-session'),
+          },
+          {
+            text: 'Enregistrer et continuer',
+            onPress: () => {
+              commitFacade();
+              router.push('/quick-measure-session');
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Relevé incomplet non enregistré',
+      'Le contour façade, les ouvrants ou l’échelle sont incomplets : ce relevé sera perdu si tu continues.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Continuer sans enregistrer',
+          style: 'destructive',
+          onPress: () => router.push('/quick-measure-session'),
+        },
+      ]
+    );
+  }, [commitFacade, hasUnsavedProgress, isFacadeReadyToSave, router]);
+
+  // Navigation forcée : on ne peut avancer que si l'étape en cours est
+  // complète, mais on peut toujours revenir en arrière pour corriger.
+  const goBack = useCallback(() => {
+    if (step === 1) {
+      router.back();
+      return;
+    }
+    setStep((current) => (current - 1) as Step);
+  }, [router, step]);
+
+  const canLeavePhotoStep = !!imageUri;
+  const canLeaveFacadeStep = facadePoints.length >= 3;
+  const canLeaveOpeningsStep = openingDraft.length === 0;
+  const canSaveFacade = scalePoints.length === 2 && realDistance > 0;
+
+  const zoomControls = (
+    <View style={styles.toolbarRow}>
+      <Pressable style={styles.zoomButton} onPress={() => setZoom((value) => clamp(value - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))}>
+        <Text style={styles.zoomButtonText}>−</Text>
+      </Pressable>
+
+      <Text style={styles.zoomLabel}>{formatNumber(zoom)}x</Text>
+
+      <Pressable style={styles.zoomButton} onPress={() => setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))}>
+        <Text style={styles.zoomButtonText}>+</Text>
+      </Pressable>
+
+      <Pressable style={styles.actionPill} onPress={recenterImage}>
+        <Text style={styles.actionPillText}>Recentrer</Text>
+      </Pressable>
+    </View>
+  );
+
+  const canvasBlock = (
+    <View style={styles.canvasCard}>
+      <View style={styles.imageWrap} onLayout={onImageLayout}>
+        {imageUri ? (
+          <Image
+            key={`selected-image-${imageVersion}`}
+            source={{ uri: imageUri }}
+            style={[
+              styles.image,
+              {
+                position: 'absolute',
+                left: frame.left,
+                top: frame.top,
+                width: frame.width,
+                height: frame.height,
+              },
+            ]}
+            // "stretch" semble forcer iOS à décoder la photo en pleine résolution
+            // puis à la sous-échantillonner naïvement au lieu de générer une
+            // vignette nette à la taille d'affichage (ce que "cover" fait
+            // correctement) — d'où le rendu flou du grand aperçu alors que la
+            // miniature de l'étape 1 (déjà en "cover") reste nette. Le cadre est
+            // déjà calculé au bon ratio (containRatio), donc "cover" ne recadre
+            // ni ne déforme rien ici.
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyText}>Choisis une image pour commencer</Text>
+          </View>
+        )}
+
+        {facadeSegments.map((segment) => (
+          <View
+            key={segment.key}
+            style={[
+              styles.segmentFacade,
+              {
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                transform: [{ rotate: `${segment.angle}deg` }],
+              },
+            ]}
+          />
+        ))}
+
+        {openingSegmentsGroups.flat().map((segment, index) => (
+          <View
+            key={`opening-${index}-${segment.key}`}
+            style={[
+              styles.segmentOpening,
+              {
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                transform: [{ rotate: `${segment.angle}deg` }],
+              },
+            ]}
+          />
+        ))}
+
+        {openingDraftSegments.map((segment) => (
+          <View
+            key={`opening-draft-${segment.key}`}
+            style={[
+              styles.segmentOpening,
+              {
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                transform: [{ rotate: `${segment.angle}deg` }],
+              },
+            ]}
+          />
+        ))}
+
+        {scaleSegments.map((segment) => (
+          <View
+            key={`scale-${segment.key}`}
+            style={[
+              styles.segmentScale,
+              {
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                transform: [{ rotate: `${segment.angle}deg` }],
+              },
+            ]}
+          />
+        ))}
+
+        {facadeCanvasPoints.map((point, index) => (
+          <View key={`facade-point-${index}`} style={[styles.pointFacade, { left: point.x - 8, top: point.y - 8 }]}>
+            <Text style={styles.pointLabel}>{index + 1}</Text>
+          </View>
+        ))}
+
+        {openingCanvasGroups.flat().map((point, index) => (
+          <View key={`opening-point-${index}`} style={[styles.pointOpening, { left: point.x - 5, top: point.y - 5 }]} />
+        ))}
+
+        {openingDraftCanvasPoints.map((point, index) => (
+          <View key={`opening-draft-point-${index}`} style={[styles.pointOpening, { left: point.x - 5, top: point.y - 5 }]} />
+        ))}
+
+        {scaleCanvasPoints.map((point, index) => (
+          <View key={`scale-point-${index}`} style={[styles.pointScale, { left: point.x - 7, top: point.y - 7 }]} />
+        ))}
+
+        <GestureDetector gesture={zoomPanGesture}>
+          <View style={styles.dragCaptureLayer} />
+        </GestureDetector>
+
+        <View style={styles.crosshair} pointerEvents="none">
+          <View style={styles.crosshairVertical} />
+          <View style={styles.crosshairHorizontal} />
+          <View style={styles.crosshairCenter} />
+        </View>
+      </View>
+
+      <Pressable style={styles.addPointButton} onPress={validatePoint}>
+        <Text style={styles.addPointText}>
+          {mode === 'facade'
+            ? 'Valider point façade'
+            : mode === 'opening'
+            ? 'Valider point ouvrant'
+            : 'Valider point échelle'}
+        </Text>
+      </Pressable>
+    </View>
+  );
+
+  const stepDots = (
+    <View style={styles.stepDotsRow}>
+      {([1, 2, 3, 4] as Step[]).map((dotStep) => (
+        <View key={dotStep} style={styles.stepDotWrap}>
+          <View
+            style={[
+              styles.stepDot,
+              dotStep === step && styles.stepDotActive,
+              dotStep < step && styles.stepDotDone,
+            ]}
+          >
+            <Text
+              style={[
+                styles.stepDotText,
+                (dotStep === step || dotStep < step) && styles.stepDotTextActive,
+              ]}
+            >
+              {dotStep < step ? '✓' : dotStep}
+            </Text>
+          </View>
+          <Text style={[styles.stepDotLabel, dotStep === step && styles.stepDotLabelActive]}>
+            {STEP_LABELS[dotStep]}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -502,98 +732,116 @@ export default function FacadePhotoPolygonPointingScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.topBar}>
-          <Pressable style={styles.topPill} onPress={() => router.back()}>
+          <Pressable style={styles.topPill} onPress={goBack}>
             <Text style={styles.topPillText}>Retour</Text>
           </Pressable>
 
           <Text style={styles.title}>Mesure rapide</Text>
 
-          <Pressable style={[styles.topPill, styles.goldPill]} onPress={() => router.push('/quick-measure-session')}>
+          <Pressable style={[styles.topPill, styles.goldPill]} onPress={goToSession}>
             <Text style={styles.goldPillText}>Session</Text>
           </Pressable>
         </View>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>Relevé façade par pointage</Text>
-          <Text style={styles.infoText}>
-            Déplace ou zoome l’image, garde la croix au centre, puis utilise “Valider point” pour poser
-            précisément les points de façade, d’ouvrants ou d’échelle.
-          </Text>
+        <View style={styles.stepHeader}>
+          <Text style={styles.stepHeaderTitle}>Étape {step}/4 — {STEP_LABELS[step]}</Text>
+          {stepDots}
         </View>
 
-        <View style={styles.controlsCard}>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="Nom façade"
-            placeholderTextColor="#8C8C93"
-            style={styles.input}
-          />
+        {step === 1 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Prends une photo sur le chantier ou choisis-en une déjà dans ton téléphone. Tu pourras
+              zoomer dessus à l’étape suivante pour poser les points précisément.
+            </Text>
 
-          <View style={styles.toolbarRow}>
-            <Pressable style={styles.actionPill} onPress={pickFromCamera}>
-              <Text style={styles.actionPillText}>📷 Prendre une photo</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionPill} onPress={pickFromLibrary}>
-              <Text style={styles.actionPillText}>Ouvrir galerie</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.toolbarRow}>
-            <Pressable style={styles.zoomButton} onPress={() => setZoom((value) => clamp(value - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))}>
-              <Text style={styles.zoomButtonText}>−</Text>
-            </Pressable>
-
-            <Text style={styles.zoomLabel}>{formatNumber(zoom)}x</Text>
-
-            <Pressable style={styles.zoomButton} onPress={() => setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))}>
-              <Text style={styles.zoomButtonText}>+</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionPill} onPress={recenterImage}>
-              <Text style={styles.actionPillText}>Recentrer</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.modeRow}>
-            <Pressable style={[styles.modeButton, mode === 'facade' && styles.modeButtonActive]} onPress={() => setMode('facade')}>
-              <Text style={[styles.modeText, mode === 'facade' && styles.modeTextActive]}>Façade</Text>
-            </Pressable>
-
-            <Pressable style={[styles.modeButton, mode === 'opening' && styles.modeButtonActive]} onPress={() => setMode('opening')}>
-              <Text style={[styles.modeText, mode === 'opening' && styles.modeTextActive]}>Ouvrants</Text>
-            </Pressable>
-
-            <Pressable style={[styles.modeButton, mode === 'scale' && styles.modeButtonActive]} onPress={() => setMode('scale')}>
-              <Text style={[styles.modeText, mode === 'scale' && styles.modeTextActive]}>Échelle</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.bottomActionsRow}>
             <TextInput
-              value={realDistanceMeters}
-              onChangeText={setRealDistanceMeters}
-              keyboardType="decimal-pad"
-              style={[styles.input, styles.scaleInput]}
-              placeholder="Distance réelle en m"
+              value={name}
+              onChangeText={setName}
+              placeholder="Nom façade"
               placeholderTextColor="#8C8C93"
+              style={styles.input}
             />
 
-            <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
-              <Text style={styles.actionPillText}>Retirer dernier point</Text>
-            </Pressable>
+            <View style={styles.toolbarRow}>
+              <Pressable style={styles.actionPill} onPress={pickFromCamera}>
+                <Text style={styles.actionPillText}>📷 Prendre une photo</Text>
+              </Pressable>
 
-            <Pressable style={styles.actionPillHalf} onPress={resetCurrentMode}>
-              <Text style={styles.actionPillText}>Réinitialiser le mode</Text>
-            </Pressable>
+              <Pressable style={styles.actionPill} onPress={pickFromLibrary}>
+                <Text style={styles.actionPillText}>Ouvrir galerie</Text>
+              </Pressable>
+            </View>
+
+            {imageUri ? (
+              <View style={styles.photoPreviewWrap}>
+                <Image source={{ uri: imageUri }} style={styles.photoPreviewImage} resizeMode="cover" />
+                <Text style={styles.photoPreviewLabel}>Photo sélectionnée ✓</Text>
+              </View>
+            ) : null}
           </View>
+        ) : null}
 
-          <Text style={styles.scaleHelpText}>
-            Mode Échelle : pose 2 points sur une longueur connue, puis saisis sa valeur réelle en mètres.
-          </Text>
+        {step === 2 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Déplace ou zoome la photo pour amener la croix rouge sur chaque angle de la façade, puis
+              appuie sur “Valider point façade”. Il faut au moins 3 points.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
 
-          {mode === 'opening' ? (
+        {step === 3 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Pointe le contour de chaque ouvrant à soustraire (fenêtre, porte...), au moins 3 points,
+              puis valide-le. Ajoute autant d’ouvrants que nécessaire, ou passe à l’étape suivante s’il
+              n’y en a pas.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
+
+        {step === 4 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Pointe 2 points sur une longueur connue de la photo (par ex. une porte), puis indique sa
+              distance réelle en mètres.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
+
+        {step >= 2 ? canvasBlock : null}
+
+        {step === 2 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer dernier point</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrentMode}>
+                <Text style={styles.actionPillText}>Réinitialiser le contour</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.metricLine}>Points façade : {facadePoints.length}</Text>
+          </View>
+        ) : null}
+
+        {step === 3 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer dernier point</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrentMode}>
+                <Text style={styles.actionPillText}>Réinitialiser l’ouvrant en cours</Text>
+              </Pressable>
+            </View>
+
             <View style={styles.bottomActionsRow}>
               <Pressable style={styles.actionPillHalf} onPress={validateOpening}>
                 <Text style={styles.actionPillText}>Valider l’ouvrant</Text>
@@ -603,146 +851,101 @@ export default function FacadePhotoPolygonPointingScreen() {
                 <Text style={styles.actionPillText}>Supprimer dernier ouvrant</Text>
               </Pressable>
             </View>
+
+            <Text style={styles.metricLine}>Ouvrants validés : {openingPolygons.length}</Text>
+          </View>
+        ) : null}
+
+        {step === 4 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <TextInput
+                value={realDistanceMeters}
+                onChangeText={setRealDistanceMeters}
+                keyboardType="decimal-pad"
+                style={[styles.input, styles.scaleInput]}
+                placeholder="Distance réelle en m"
+                placeholderTextColor="#8C8C93"
+              />
+
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer dernier point</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrentMode}>
+                <Text style={styles.actionPillText}>Réinitialiser l’échelle</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.metricLine}>Points échelle : {scalePoints.length}/2</Text>
+            <Text style={styles.metricNet}>Surface nette estimée : {formatNumber(netAreaM2)} m²</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.navRow}>
+          <Pressable style={styles.secondaryButtonWide} onPress={goBack}>
+            <Text style={styles.secondaryButtonText}>{step === 1 ? 'Annuler' : 'Précédent'}</Text>
+          </Pressable>
+
+          {step === 1 ? (
+            <Pressable
+              style={[styles.goldButtonFull, !canLeavePhotoStep && styles.navButtonDisabled]}
+              disabled={!canLeavePhotoStep}
+              onPress={() => setStep(2)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 2 ? (
+            <Pressable
+              style={[styles.goldButtonFull, !canLeaveFacadeStep && styles.navButtonDisabled]}
+              disabled={!canLeaveFacadeStep}
+              onPress={() => setStep(3)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 3 ? (
+            <Pressable
+              style={[styles.goldButtonFull, !canLeaveOpeningsStep && styles.navButtonDisabled]}
+              disabled={!canLeaveOpeningsStep}
+              onPress={() => setStep(4)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 4 ? (
+            <Pressable
+              style={[styles.goldButtonFull, !canSaveFacade && styles.navButtonDisabled]}
+              disabled={!canSaveFacade}
+              onPress={saveFacade}
+            >
+              <Text style={styles.goldButtonText}>Enregistrer la façade</Text>
+            </Pressable>
           ) : null}
         </View>
 
-        <View style={styles.canvasCard}>
-          <View style={styles.imageWrap} onLayout={onImageLayout}>
-            {imageUri ? (
-              <Image
-                key={`selected-image-${imageVersion}`}
-                source={{ uri: imageUri }}
-                style={[
-                  styles.image,
-                  {
-                    position: 'absolute',
-                    left: frame.left,
-                    top: frame.top,
-                    width: frame.width,
-                    height: frame.height,
-                  },
-                ]}
-                resizeMode="stretch"
-              />
-            ) : (
-              <View style={styles.emptyWrap}>
-                <Text style={styles.emptyText}>Choisis une image pour commencer</Text>
-              </View>
-            )}
+        {step === 3 && !canLeaveOpeningsStep ? (
+          <Text style={styles.hintText}>Valide ou réinitialise l’ouvrant en cours pour continuer.</Text>
+        ) : null}
+        {step === 4 && !canSaveFacade ? (
+          <Text style={styles.hintText}>
+            Place 2 points d’échelle et une distance réelle supérieure à 0 pour enregistrer.
+          </Text>
+        ) : null}
 
-            {facadeSegments.map((segment) => (
-              <View
-                key={segment.key}
-                style={[
-                  styles.segmentFacade,
-                  {
-                    left: segment.left,
-                    top: segment.top,
-                    width: segment.width,
-                    transform: [{ rotate: `${segment.angle}deg` }],
-                  },
-                ]}
-              />
-            ))}
-
-            {openingSegmentsGroups.flat().map((segment, index) => (
-              <View
-                key={`opening-${index}-${segment.key}`}
-                style={[
-                  styles.segmentOpening,
-                  {
-                    left: segment.left,
-                    top: segment.top,
-                    width: segment.width,
-                    transform: [{ rotate: `${segment.angle}deg` }],
-                  },
-                ]}
-              />
-            ))}
-
-            {openingDraftSegments.map((segment) => (
-              <View
-                key={`opening-draft-${segment.key}`}
-                style={[
-                  styles.segmentOpening,
-                  {
-                    left: segment.left,
-                    top: segment.top,
-                    width: segment.width,
-                    transform: [{ rotate: `${segment.angle}deg` }],
-                  },
-                ]}
-              />
-            ))}
-
-            {scaleSegments.map((segment) => (
-              <View
-                key={`scale-${segment.key}`}
-                style={[
-                  styles.segmentScale,
-                  {
-                    left: segment.left,
-                    top: segment.top,
-                    width: segment.width,
-                    transform: [{ rotate: `${segment.angle}deg` }],
-                  },
-                ]}
-              />
-            ))}
-
-            {facadeCanvasPoints.map((point, index) => (
-              <View key={`facade-point-${index}`} style={[styles.pointFacade, { left: point.x - 8, top: point.y - 8 }]}>
-                <Text style={styles.pointLabel}>{index + 1}</Text>
-              </View>
-            ))}
-
-            {openingCanvasGroups.flat().map((point, index) => (
-              <View key={`opening-point-${index}`} style={[styles.pointOpening, { left: point.x - 5, top: point.y - 5 }]} />
-            ))}
-
-            {openingDraftCanvasPoints.map((point, index) => (
-              <View key={`opening-draft-point-${index}`} style={[styles.pointOpening, { left: point.x - 5, top: point.y - 5 }]} />
-            ))}
-
-            {scaleCanvasPoints.map((point, index) => (
-              <View key={`scale-point-${index}`} style={[styles.pointScale, { left: point.x - 7, top: point.y - 7 }]} />
-            ))}
-
-            <View
-              style={styles.dragCaptureLayer}
-              {...panResponder.panHandlers}
-            />
-
-            <View style={styles.crosshair} pointerEvents="none">
-              <View style={styles.crosshairVertical} />
-              <View style={styles.crosshairHorizontal} />
-              <View style={styles.crosshairCenter} />
-            </View>
-          </View>
-
-          <Pressable style={styles.addPointButton} onPress={validatePoint}>
-            <Text style={styles.addPointText}>
-              {mode === 'facade'
-                ? 'Valider point façade'
-                : mode === 'opening'
-                ? 'Valider point ouvrant'
-                : 'Valider point échelle'}
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.actionsRow}>
-          <Pressable style={styles.goldButtonFull} onPress={saveFacade}>
-            <Text style={styles.goldButtonText}>Sauvegarder la façade</Text>
-          </Pressable>
-
-          <Pressable style={styles.secondaryButtonWide} onPress={() => router.push('/quick-measure-session')}>
-            <Text style={styles.secondaryButtonText}>Terminer le relevé</Text>
-          </Pressable>
-        </View>
+        <Pressable style={styles.exitLink} onPress={goToSession}>
+          <Text style={styles.exitLinkText}>Terminer le relevé</Text>
+        </Pressable>
 
         <View style={styles.metricsCard}>
           <Text style={styles.metricsTitle}>Résumé courant</Text>
+          <Text style={styles.metricLine}>
+            Résolution photo détectée : {Math.round(imageNatural.width)} × {Math.round(imageNatural.height)} px
+          </Text>
           <Text style={styles.metricLine}>Points façade : {facadePoints.length}</Text>
           <Text style={styles.metricLine}>Ouvrants validés : {openingPolygons.length}</Text>
           <Text style={styles.metricLine}>Points échelle : {scalePoints.length}/2</Text>
@@ -799,6 +1002,67 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
+  stepHeader: {
+    marginHorizontal: 14,
+    marginBottom: 12,
+    gap: 10,
+  },
+  stepHeaderTitle: {
+    color: '#1C1C1E',
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  stepDotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  stepDotWrap: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 4,
+  },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: '#E7E2D9',
+    borderWidth: 1,
+    borderColor: '#D9CFBC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepDotActive: {
+    backgroundColor: '#D4AF37',
+    borderColor: '#D4AF37',
+  },
+  stepDotDone: {
+    backgroundColor: '#B8962E',
+    borderColor: '#B8962E',
+  },
+  stepDotText: {
+    color: '#8C8C93',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  stepDotTextActive: {
+    color: '#FFFFFF',
+  },
+  stepDotLabel: {
+    color: '#8C8C93',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  stepDotLabelActive: {
+    color: '#1C1C1E',
+    fontWeight: '900',
+  },
+  stepInstructions: {
+    color: '#5A5A5E',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   infoCard: {
     marginHorizontal: 14,
     backgroundColor: '#EFE8DB',
@@ -821,6 +1085,7 @@ const styles = StyleSheet.create({
   },
   controlsCard: {
     marginHorizontal: 14,
+    marginBottom: 12,
     backgroundColor: '#EFE8DB',
     borderRadius: 20,
     padding: 14,
@@ -833,11 +1098,6 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
     flexWrap: 'wrap',
-  },
-  modeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
   },
   bottomActionsRow: {
     flexDirection: 'row',
@@ -912,30 +1172,27 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
   },
-  modeButton: {
-    flex: 1,
-    minWidth: 90,
-    backgroundColor: '#E7E2D9',
-    borderRadius: 14,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
+  photoPreviewWrap: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
   },
-  modeButtonActive: {
-    backgroundColor: '#D4AF37',
+  photoPreviewImage: {
+    width: '100%',
+    height: 160,
   },
-  modeText: {
+  photoPreviewLabel: {
+    backgroundColor: '#FFFFFF',
     color: '#1C1C1E',
     fontWeight: '800',
-    fontSize: 15,
-  },
-  modeTextActive: {
-    color: '#111111',
-    fontWeight: '900',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 6,
   },
   canvasCard: {
-    margin: 14,
-    marginTop: 12,
+    marginHorizontal: 14,
+    marginBottom: 12,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 12,
@@ -1072,11 +1329,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 12,
   },
-  actionsRow: {
+  navRow: {
     marginHorizontal: 14,
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
+  },
+  navButtonDisabled: {
+    opacity: 0.4,
+  },
+  hintText: {
+    marginHorizontal: 14,
+    marginTop: 8,
+    color: '#B8962E',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   goldButtonFull: {
     flex: 1,
@@ -1107,6 +1375,17 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 15,
     textAlign: 'center',
+  },
+  exitLink: {
+    marginTop: 14,
+    marginBottom: 4,
+    alignItems: 'center',
+  },
+  exitLinkText: {
+    color: '#8C8C93',
+    fontWeight: '800',
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
   metricsCard: {
     marginHorizontal: 14,

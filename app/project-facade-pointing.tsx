@@ -1,5 +1,5 @@
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -14,11 +14,20 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { PanGestureHandler, State } from 'react-native-gesture-handler';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { useProjectStore } from '../lib/projectStore';
+import { usePinchZoomPan } from '../hooks/usePinchZoomPan';
 
 type Point = { x: number; y: number };
 type EditMode = 'outer' | 'void' | 'scale';
+type Step = 1 | 2 | 3 | 4;
+
+const STEP_LABELS: Record<Step, string> = {
+  1: 'Photo',
+  2: 'Façade',
+  3: 'Ouvrants',
+  4: 'Échelle',
+};
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 const fmt = (v: number, digits = 2) => v.toFixed(digits).replace('.', ',');
@@ -94,12 +103,12 @@ export default function ProjectFacadePointingScreen() {
   const project = getProjectById(projectId);
   const building = project?.buildings.find((b) => b.id === buildingId);
 
+  const [step, setStep] = useState<Step>(1);
   const [name, setName] = useState('Nouvelle façade');
   const [imageUri, setImageUri] = useState('');
   const [imageNatural, setImageNatural] = useState({ width: 1, height: 1 });
   const [imageBox, setImageBox] = useState({ width: 1, height: 1 });
 
-  const [editMode, setEditMode] = useState<EditMode>('outer');
   const [outerPolygon, setOuterPolygon] = useState<Point[]>([]);
   const [voidPolygons, setVoidPolygons] = useState<Point[][]>([]);
   const [voidDraft, setVoidDraft] = useState<Point[]>([]);
@@ -108,7 +117,12 @@ export default function ProjectFacadePointingScreen() {
 
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
-  const gestureStartRef = useRef({ x: 0, y: 0 });
+  const [scrollEnabled, setScrollEnabled] = useState(true);
+
+  // Le mode de pointage découle de l'étape en cours : parcours forcé
+  // photo -> façade -> ouvrants -> échelle, plus lisible sur le terrain
+  // qu'un sélecteur de mode séparé.
+  const editMode: EditMode = step === 3 ? 'void' : step === 4 ? 'scale' : 'outer';
 
   async function pickFromCamera() {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -121,12 +135,13 @@ export default function ProjectFacadePointingScreen() {
       mediaTypes: ['images'] as any,
       quality: 1,
       allowsEditing: false,
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
-      const uri = result.assets[0].uri;
-      setImageUri(uri);
-      Image.getSize(uri, (w, h) => setImageNatural({ width: w, height: h }));
+      const asset = result.assets[0];
+      setImageUri(asset.uri);
+      applyImageSize(asset.uri, asset.width, asset.height);
       setOffset({ x: 0, y: 0 });
       setScale(1);
     }
@@ -143,15 +158,32 @@ export default function ProjectFacadePointingScreen() {
       mediaTypes: ['images'] as any,
       quality: 1,
       allowsEditing: false,
+      // Sans ça, iOS peut renvoyer une représentation "compatible" recompressée
+      // et donc plus basse résolution au lieu de l'original — d'où un rendu flou
+      // sur les photos choisies dans la galerie.
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
-      const uri = result.assets[0].uri;
-      setImageUri(uri);
-      Image.getSize(uri, (w, h) => setImageNatural({ width: w, height: h }));
+      const asset = result.assets[0];
+      setImageUri(asset.uri);
+      applyImageSize(asset.uri, asset.width, asset.height);
       setOffset({ x: 0, y: 0 });
       setScale(1);
     }
+  }
+
+  function applyImageSize(uri: string, assetWidth?: number, assetHeight?: number) {
+    // On fait confiance en priorité aux dimensions renvoyées par
+    // ImagePicker (déjà orientées comme la photo s'affiche). Sur iOS,
+    // Image.getSize peut renvoyer la taille brute du buffer AVANT
+    // rotation EXIF, ce qui inverse largeur/hauteur pour une photo prise
+    // en portrait et fausserait le calcul des points sur la façade.
+    if ((assetWidth ?? 0) > 0 && (assetHeight ?? 0) > 0) {
+      setImageNatural({ width: assetWidth as number, height: assetHeight as number });
+      return;
+    }
+    Image.getSize(uri, (w, h) => setImageNatural({ width: w, height: h }));
   }
 
   function onImageLayout(e: LayoutChangeEvent) {
@@ -266,22 +298,25 @@ export default function ProjectFacadePointingScreen() {
   function recenter() {
     setOffset({ x: 0, y: 0 });
     setScale(1);
-    gestureStartRef.current = { x: 0, y: 0 };
   }
 
-  function onMove(e: any) {
-    const { translationX, translationY } = e.nativeEvent;
-    setOffset({
-      x: gestureStartRef.current.x + translationX,
-      y: gestureStartRef.current.y + translationY,
-    });
-  }
-
-  function onState(e: any) {
-    if (e.nativeEvent.state === State.BEGAN) {
-      gestureStartRef.current = offset;
+  function goBack() {
+    if (step === 1) {
+      router.back();
+      return;
     }
+    setStep((current) => (current - 1) as Step);
   }
+
+  const zoomPanGesture = usePinchZoomPan({
+    zoom: scale,
+    setZoom: setScale,
+    offset,
+    setOffset,
+    minZoom: 0.5,
+    maxZoom: 4,
+    onGestureActiveChange: (active) => setScrollEnabled(!active),
+  });
 
   const outerCanvas = useMemo(
     () => outerPolygon.map(toCanvas),
@@ -329,6 +364,11 @@ export default function ProjectFacadePointingScreen() {
   const voidsAreaM2 = voidsAreaPx * m2Factor;
   const netAreaM2 = Math.max(0, grossAreaM2 - voidsAreaM2);
 
+  const canLeavePhotoStep = !!imageUri;
+  const canLeaveFacadeStep = outerPolygon.length >= 3;
+  const canLeaveOpeningsStep = voidDraft.length === 0;
+  const canSaveFacade = scalePoints.length === 2 && !!realDistance && realDistance > 0;
+
   function saveFacade() {
     if (!projectId || !buildingId) {
       Alert.alert('Projet manquant', 'Projet ou bâtiment cible introuvable.');
@@ -347,7 +387,7 @@ export default function ProjectFacadePointingScreen() {
       return;
     }
     if (scalePoints.length !== 2 || !realDistance || realDistance <= 0) {
-      Alert.alert('Échelle manquante', 'Passe en mode Échelle, place 2 points sur une longueur connue de la photo, puis renseigne la distance réelle, par exemple 0,90 m.');
+      Alert.alert('Échelle manquante', 'Reviens à l’étape Échelle, place 2 points sur une longueur connue de la photo, puis renseigne la distance réelle, par exemple 0,90 m.');
       return;
     }
 
@@ -365,157 +405,49 @@ export default function ProjectFacadePointingScreen() {
     });
   }
 
-  return (
-    <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.topBar}>
-          <Pressable style={styles.topPill} onPress={() => router.back()}>
-            <Text style={styles.topPillText}>Retour</Text>
-          </Pressable>
+  const zoomControls = (
+    <View style={styles.toolbarRow}>
+      <Pressable style={styles.zoomButton} onPress={() => setScale((v) => clamp(v - 0.25, 0.5, 4))}>
+        <Text style={styles.zoomButtonText}>−</Text>
+      </Pressable>
 
-          <Text style={styles.title}>Façade projet</Text>
+      <Text style={styles.zoomLabel}>{fmt(scale)}x</Text>
 
-          <Pressable style={[styles.topPill, styles.goldPill]} onPress={saveFacade}>
-            <Text style={styles.goldPillText}>Sauver</Text>
-          </Pressable>
-        </View>
+      <Pressable style={styles.zoomButton} onPress={() => setScale((v) => clamp(v + 0.25, 0.5, 4))}>
+        <Text style={styles.zoomButtonText}>+</Text>
+      </Pressable>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>
-            {project?.clientName || 'Projet'} · {building?.name || 'Bâtiment'}
-          </Text>
-          <Text style={styles.infoText}>
-            Pointez la façade complète, puis les ouvrants, puis la cote réelle.
-          </Text>
-        </View>
+      <Pressable style={styles.actionPill} onPress={recenter}>
+        <Text style={styles.actionPillText}>Recentrer</Text>
+      </Pressable>
+    </View>
+  );
 
-        <View style={styles.controlsCard}>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="Nom façade"
-            placeholderTextColor="#8C8C93"
-            style={styles.input}
-          />
-
-          <View style={styles.toolbarRow}>
-            <Pressable style={styles.actionPill} onPress={pickFromCamera}>
-              <Text style={styles.actionPillText}>📷 Prendre une photo</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionPill} onPress={pickFromLibrary}>
-              <Text style={styles.actionPillText}>Ouvrir galerie</Text>
-            </Pressable>
-
-            <Pressable style={styles.zoomButton} onPress={() => setScale((v) => clamp(v - 0.25, 0.5, 4))}>
-              <Text style={styles.zoomButtonText}>−</Text>
-            </Pressable>
-
-            <Text style={styles.zoomLabel}>{fmt(scale)}x</Text>
-
-            <Pressable style={styles.zoomButton} onPress={() => setScale((v) => clamp(v + 0.25, 0.5, 4))}>
-              <Text style={styles.zoomButtonText}>+</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionPill} onPress={recenter}>
-              <Text style={styles.actionPillText}>Recentrer</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.modeRow}>
-            <Pressable
-              style={[styles.modeButton, editMode === 'outer' && styles.modeButtonActive]}
-              onPress={() => setEditMode('outer')}
-            >
-              <Text style={[styles.modeText, editMode === 'outer' && styles.modeTextActive]}>
-                Façade
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={[styles.modeButton, editMode === 'void' && styles.modeButtonActive]}
-              onPress={() => setEditMode('void')}
-            >
-              <Text style={[styles.modeText, editMode === 'void' && styles.modeTextActive]}>
-                Ouvrants
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={[styles.modeButton, editMode === 'scale' && styles.modeButtonActive]}
-              onPress={() => setEditMode('scale')}
-            >
-              <Text style={[styles.modeText, editMode === 'scale' && styles.modeTextActive]}>
-                Échelle
-              </Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.bottomActionsRow}>
-            <TextInput
-              value={realDistanceMeters}
-              onChangeText={setRealDistanceMeters}
-              keyboardType="decimal-pad"
-              style={[styles.input, styles.scaleInput]}
-              placeholder="Ex : 0,90 m"
-              placeholderTextColor="#8C8C93"
-            />
-
-            <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
-              <Text style={styles.actionPillText}>Retirer</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionPillHalf} onPress={resetCurrent}>
-              <Text style={styles.actionPillText}>Réinit.</Text>
-            </Pressable>
-          </View>
-
-          <Text style={styles.scaleHelpText}>
-            En mode Échelle, place 2 points sur une longueur connue puis saisis la distance réelle, par exemple 0,90 m.
-          </Text>
-
-          {editMode === 'void' ? (
-            <View style={styles.bottomActionsRow}>
-              <Pressable style={styles.actionPillHalf} onPress={addVoidPolygon}>
-                <Text style={styles.actionPillText}>Valider vide</Text>
-              </Pressable>
-
-              {voidPolygons.length > 0 ? (
-                <Pressable style={styles.actionPillHalf} onPress={deleteLastVoid}>
-                  <Text style={styles.actionPillText}>Suppr. vide</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.canvasCard}>
-          <View style={styles.imageWrap} onLayout={onImageLayout}>
-            <PanGestureHandler onGestureEvent={onMove} onHandlerStateChange={onState}>
-              <View style={{ flex: 1 }}>
-                {imageUri ? (
-                  <Image
-                    source={{ uri: imageUri }}
-                    style={[
-                      styles.image,
-                      {
-                        transform: [
-                          { translateX: offset.x },
-                          { translateY: offset.y },
-                          { scale },
-                        ],
-                      },
-                    ]}
-                    resizeMode="contain"
-                  />
-                ) : (
-                  <View style={styles.emptyWrap}>
-                    <Text style={styles.emptyText}>Choisis une image pour commencer</Text>
-                  </View>
-                )}
+  const canvasBlock = (
+    <View style={styles.canvasCard}>
+      <View style={styles.imageWrap} onLayout={onImageLayout}>
+        <GestureDetector gesture={zoomPanGesture}>
+          <View style={{ flex: 1 }}>
+            {imageUri ? (
+              <Image
+                source={{ uri: imageUri }}
+                style={[
+                  styles.image,
+                  {
+                    transform: [
+                      { translateX: offset.x },
+                      { translateY: offset.y },
+                      { scale },
+                    ],
+                  },
+                ]}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>Choisis une image pour commencer</Text>
               </View>
-            </PanGestureHandler>
-
+            )}
             {outerSegments.map((s) => (
               <View
                 key={s.key}
@@ -636,13 +568,269 @@ export default function ProjectFacadePointingScreen() {
               />
             </View>
           </View>
+        </GestureDetector>
+      </View>
 
-         <Pressable style={styles.goldButtonFull} onPress={validatePoint}>
-  <Text style={styles.goldButtonText}>Valider point</Text>
-</Pressable>
+      <Pressable style={styles.goldButtonFull} onPress={validatePoint}>
+        <Text style={styles.goldButtonText}>
+          {editMode === 'outer'
+            ? 'Valider point façade'
+            : editMode === 'void'
+            ? 'Valider point ouvrant'
+            : 'Valider point échelle'}
+        </Text>
+      </Pressable>
+    </View>
+  );
+
+  const stepDots = (
+    <View style={styles.stepDotsRow}>
+      {([1, 2, 3, 4] as Step[]).map((dotStep) => (
+        <View key={dotStep} style={styles.stepDotWrap}>
+          <View
+            style={[
+              styles.stepDot,
+              dotStep === step && styles.stepDotActive,
+              dotStep < step && styles.stepDotDone,
+            ]}
+          >
+            <Text
+              style={[
+                styles.stepDotText,
+                (dotStep === step || dotStep < step) && styles.stepDotTextActive,
+              ]}
+            >
+              {dotStep < step ? '✓' : dotStep}
+            </Text>
+          </View>
+          <Text style={[styles.stepDotLabel, dotStep === step && styles.stepDotLabelActive]}>
+            {STEP_LABELS[dotStep]}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} scrollEnabled={scrollEnabled}>
+        <View style={styles.topBar}>
+          <Pressable style={styles.topPill} onPress={goBack}>
+            <Text style={styles.topPillText}>Retour</Text>
+          </Pressable>
+
+          <Text style={styles.title}>Façade projet</Text>
+
+          <Pressable
+            style={[styles.topPill, styles.goldPill, !canSaveFacade && styles.navButtonDisabled]}
+            disabled={!canSaveFacade}
+            onPress={saveFacade}
+          >
+            <Text style={styles.goldPillText}>Sauver</Text>
+          </Pressable>
         </View>
 
+        <View style={styles.infoCard}>
+          <Text style={styles.infoTitle}>
+            {project?.clientName || 'Projet'} · {building?.name || 'Bâtiment'}
+          </Text>
+          <Text style={styles.infoText}>
+            {STEP_LABELS[step]} — étape {step}/4.
+          </Text>
+        </View>
 
+        <View style={styles.stepHeader}>{stepDots}</View>
+
+        {step === 1 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Prends une photo sur le chantier ou choisis-en une déjà dans ton téléphone. Tu pourras
+              zoomer dessus à l’étape suivante pour poser les points précisément.
+            </Text>
+
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Nom façade"
+              placeholderTextColor="#8C8C93"
+              style={styles.input}
+            />
+
+            <View style={styles.toolbarRow}>
+              <Pressable style={styles.actionPill} onPress={pickFromCamera}>
+                <Text style={styles.actionPillText}>📷 Prendre une photo</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPill} onPress={pickFromLibrary}>
+                <Text style={styles.actionPillText}>Ouvrir galerie</Text>
+              </Pressable>
+            </View>
+
+            {imageUri ? (
+              <View style={styles.photoPreviewWrap}>
+                <Image source={{ uri: imageUri }} style={styles.photoPreviewImage} resizeMode="cover" />
+                <Text style={styles.photoPreviewLabel}>Photo sélectionnée ✓</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {step === 2 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Déplace ou zoome la photo pour amener la croix rouge sur chaque angle de la façade, puis
+              appuie sur “Valider point façade”. Il faut au moins 3 points.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
+
+        {step === 3 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Pointe le contour de chaque ouvrant à soustraire (fenêtre, porte...), au moins 3 points,
+              puis valide-le. Ajoute autant d’ouvrants que nécessaire, ou passe à l’étape suivante s’il
+              n’y en a pas.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
+
+        {step === 4 ? (
+          <View style={styles.controlsCard}>
+            <Text style={styles.stepInstructions}>
+              Pointe 2 points sur une longueur connue de la photo (par ex. une porte), puis indique sa
+              distance réelle en mètres.
+            </Text>
+            {zoomControls}
+          </View>
+        ) : null}
+
+        {step >= 2 ? canvasBlock : null}
+
+        {step === 2 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer dernier point</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrent}>
+                <Text style={styles.actionPillText}>Réinitialiser le contour</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.metricLine}>Points façade : {outerPolygon.length}</Text>
+          </View>
+        ) : null}
+
+        {step === 3 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer dernier point</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrent}>
+                <Text style={styles.actionPillText}>Réinitialiser l’ouvrant en cours</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.bottomActionsRow}>
+              <Pressable style={styles.actionPillHalf} onPress={addVoidPolygon}>
+                <Text style={styles.actionPillText}>Valider l’ouvrant</Text>
+              </Pressable>
+
+              {voidPolygons.length > 0 ? (
+                <Pressable style={styles.actionPillHalf} onPress={deleteLastVoid}>
+                  <Text style={styles.actionPillText}>Supprimer dernier ouvrant</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <Text style={styles.metricLine}>Ouvrants validés : {voidPolygons.length}</Text>
+          </View>
+        ) : null}
+
+        {step === 4 ? (
+          <View style={styles.controlsCard}>
+            <View style={styles.bottomActionsRow}>
+              <TextInput
+                value={realDistanceMeters}
+                onChangeText={setRealDistanceMeters}
+                keyboardType="decimal-pad"
+                style={[styles.input, styles.scaleInput]}
+                placeholder="Ex : 0,90 m"
+                placeholderTextColor="#8C8C93"
+              />
+
+              <Pressable style={styles.actionPillHalf} onPress={removeLastPoint}>
+                <Text style={styles.actionPillText}>Retirer</Text>
+              </Pressable>
+
+              <Pressable style={styles.actionPillHalf} onPress={resetCurrent}>
+                <Text style={styles.actionPillText}>Réinit.</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.metricLine}>Points échelle : {scalePoints.length}/2</Text>
+            <Text style={styles.metricNet}>Surface nette estimée : {fmt(netAreaM2)} m²</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.navRow}>
+          <Pressable style={styles.secondaryButtonWide} onPress={goBack}>
+            <Text style={styles.secondaryButtonText}>{step === 1 ? 'Annuler' : 'Précédent'}</Text>
+          </Pressable>
+
+          {step === 1 ? (
+            <Pressable
+              style={[styles.goldButtonNav, !canLeavePhotoStep && styles.navButtonDisabled]}
+              disabled={!canLeavePhotoStep}
+              onPress={() => setStep(2)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 2 ? (
+            <Pressable
+              style={[styles.goldButtonNav, !canLeaveFacadeStep && styles.navButtonDisabled]}
+              disabled={!canLeaveFacadeStep}
+              onPress={() => setStep(3)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 3 ? (
+            <Pressable
+              style={[styles.goldButtonNav, !canLeaveOpeningsStep && styles.navButtonDisabled]}
+              disabled={!canLeaveOpeningsStep}
+              onPress={() => setStep(4)}
+            >
+              <Text style={styles.goldButtonText}>Suivant</Text>
+            </Pressable>
+          ) : null}
+
+          {step === 4 ? (
+            <Pressable
+              style={[styles.goldButtonNav, !canSaveFacade && styles.navButtonDisabled]}
+              disabled={!canSaveFacade}
+              onPress={saveFacade}
+            >
+              <Text style={styles.goldButtonText}>Enregistrer la façade</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {step === 3 && !canLeaveOpeningsStep ? (
+          <Text style={styles.hintText}>Valide ou réinitialise l’ouvrant en cours pour continuer.</Text>
+        ) : null}
+        {step === 4 && !canSaveFacade ? (
+          <Text style={styles.hintText}>
+            Place 2 points d’échelle et une distance réelle supérieure à 0 pour enregistrer.
+          </Text>
+        ) : null}
 
         <View style={styles.metricsCard}>
           <Text style={styles.metricsTitle}>Résultats façade</Text>
@@ -697,6 +885,60 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
+  stepHeader: {
+    marginHorizontal: 14,
+    marginBottom: 12,
+  },
+  stepDotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  stepDotWrap: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 4,
+  },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: '#E7E2D9',
+    borderWidth: 1,
+    borderColor: '#D9CFBC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepDotActive: {
+    backgroundColor: '#D4AF37',
+    borderColor: '#D4AF37',
+  },
+  stepDotDone: {
+    backgroundColor: '#B8962E',
+    borderColor: '#B8962E',
+  },
+  stepDotText: {
+    color: '#8C8C93',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  stepDotTextActive: {
+    color: '#FFFFFF',
+  },
+  stepDotLabel: {
+    color: '#8C8C93',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  stepDotLabelActive: {
+    color: '#1C1C1E',
+    fontWeight: '900',
+  },
+  stepInstructions: {
+    color: '#5A5A5E',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   infoCard: {
     marginHorizontal: 14,
     backgroundColor: '#EFE8DB',
@@ -718,6 +960,7 @@ const styles = StyleSheet.create({
   },
   controlsCard: {
     marginHorizontal: 14,
+    marginBottom: 12,
     backgroundColor: '#EFE8DB',
     borderRadius: 20,
     padding: 14,
@@ -730,11 +973,6 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
     flexWrap: 'wrap',
-  },
-  modeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
   },
   bottomActionsRow: {
     flexDirection: 'row',
@@ -809,30 +1047,28 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
   },
-  modeButton: {
-    flex: 1,
-    minWidth: 90,
-    backgroundColor: '#E7E2D9',
-    borderRadius: 14,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
+  photoPreviewWrap: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2D7C3',
   },
-  modeButtonActive: {
-    backgroundColor: '#D4AF37',
+  photoPreviewImage: {
+    width: '100%',
+    height: 160,
   },
-  modeText: {
+  photoPreviewLabel: {
+    backgroundColor: '#FFFFFF',
     color: '#1C1C1E',
     fontWeight: '800',
-    fontSize: 15,
-  },
-  modeTextActive: {
-    color: '#111111',
-    fontWeight: '900',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 6,
   },
   canvasCard: {
     margin: 14,
-    marginTop: 12,
+    marginTop: 0,
+    marginBottom: 12,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 12,
@@ -935,8 +1171,49 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 18,
   },
+  navRow: {
+    marginHorizontal: 14,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  goldButtonNav: {
+    flex: 1,
+    backgroundColor: '#D4AF37',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  navButtonDisabled: {
+    opacity: 0.4,
+  },
+  hintText: {
+    marginHorizontal: 14,
+    marginTop: 8,
+    color: '#B8962E',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  secondaryButtonWide: {
+    flex: 1,
+    backgroundColor: '#E7E2D9',
+    borderRadius: 16,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  secondaryButtonText: {
+    color: '#1C1C1E',
+    fontWeight: '800',
+    fontSize: 15,
+    textAlign: 'center',
+  },
   metricsCard: {
     marginHorizontal: 14,
+    marginTop: 14,
     marginBottom: 14,
     backgroundColor: '#EFE8DB',
     borderRadius: 20,
